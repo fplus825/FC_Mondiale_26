@@ -516,18 +516,34 @@ function render(){
   }
 }
 
+async function doLogin(){
+  const email=document.getElementById('l-email').value.trim();
+  const pwd=document.getElementById('l-pwd').value.trim();
+  if(!email||!pwd){showToast('Inserisci email e password');return;}
+  const btn=document.getElementById('l-btn');
+  btn.disabled=true;btn.textContent='Accesso…';
+  const {error}=await sb.auth.signInWithPassword({email,password:pwd});
+  if(error){
+    showToast('Credenziali non valide');
+    btn.disabled=false;btn.textContent='Accedi';
+  }
+}
+
 function renderAuth(){
-  document.getElementById("root").innerHTML=`
+  document.getElementById('root').innerHTML=`
   <div class="overlay">
     <div class="auth-box">
       <div class="logo">FC <span>MONDIALI</span></div>
-      <div class="sub" style="margin-bottom:20px">Pool scommesse · Mondiale 2026</div>
-      <div style="text-align:center;padding:20px 0">
-        <div class="spinner" style="margin:0 auto 14px"></div>
-        <div class="note">Accesso in corso&hellip;<br>Hai ricevuto il link via WhatsApp?</div>
-      </div>
+      <div class="sub" style="margin-bottom:24px">Pool scommesse · Mondiale 2026</div>
+      <input id="l-email" class="input" type="email" placeholder="nome@fcmondiali.local" autocomplete="email" style="margin-bottom:10px">
+      <input id="l-pwd" class="input" type="password" placeholder="password" autocomplete="current-password" style="margin-bottom:14px">
+      <button id="l-btn" class="btn btn-primary" onclick="doLogin()">Accedi</button>
     </div>
   </div>`;
+  setTimeout(()=>{
+    const el=document.getElementById('l-email');
+    if(el)el.focus();
+  },100);
 }
 
 // ── VIEW: TURNO ───────────────────────────────────────────────
