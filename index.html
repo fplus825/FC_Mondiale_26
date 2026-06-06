@@ -354,15 +354,7 @@ async function loadProfile(){
   A.profile=data;
 }
 
-async function sendMagicLink(){
-  const email=document.getElementById('auth-email').value.trim();
-  if(!email){showToast('Inserisci una email');return;}
-  const btn=document.getElementById('auth-btn');
-  btn.disabled=true;btn.textContent='Invio…';
-  const {error}=await sb.auth.signInWithOtp({email,options:{emailRedirectTo:location.href}});
-  if(error){showToast('Errore: '+error.message);btn.disabled=false;btn.textContent='Invia magic link';}
-  else{document.getElementById('auth-status').textContent='✓ Link inviato! Controlla la tua email.';}
-}
+
 
 async function signOut(){
   await sb.auth.signOut();
@@ -525,15 +517,15 @@ function render(){
 }
 
 function renderAuth(){
-  document.getElementById('root').innerHTML=`
+  document.getElementById("root").innerHTML=`
   <div class="overlay">
     <div class="auth-box">
       <div class="logo">FC <span>MONDIALI</span></div>
       <div class="sub" style="margin-bottom:20px">Pool scommesse · Mondiale 2026</div>
-      <div class="eyebrow">Accedi con magic link</div>
-      <input id="auth-email" class="input" type="email" placeholder="la-tua@email.com" style="margin-bottom:10px">
-      <button id="auth-btn" class="btn btn-primary" onclick="sendMagicLink()">Invia magic link</button>
-      <div class="auth-status" id="auth-status"></div>
+      <div style="text-align:center;padding:20px 0">
+        <div class="spinner" style="margin:0 auto 14px"></div>
+        <div class="note">Accesso in corso&hellip;<br>Hai ricevuto il link via WhatsApp?</div>
+      </div>
     </div>
   </div>`;
 }
