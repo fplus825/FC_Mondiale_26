@@ -325,22 +325,28 @@ const A={
 window.A=A;
 
 // ── Auth ──────────────────────────────────────────────────────
-async function initAuth(){
-  // il client Supabase JS gestisce automaticamente il token dall'URL (#access_token=...)
-  // ma serve aspettare che lo abbia processato prima di chiamare getSession
-  const {data:{session}}=await sb.auth.getSession();
-  if(session){
-    A.user=session.user;
-    await loadProfile();
-    await loadRounds();
-    initRealtime();
-  }
-  A.loading=false;
-  render();
-  // ripulisci l'URL dai token dopo il login via magic link
-  if(window.location.hash&&window.location.hash.includes('access_token')){
-    history.replaceState(null,'',window.location.pathname);
-  }
+function initAuth(){
+  // onAuthStateChange gestisce sia sessioni preesistenti (INITIAL_SESSION)
+  // sia nuovi login via magic link (SIGNED_IN) — unico punto di verità
+  sb.auth.onAuthStateChange(async(event,session)=>{
+    if(event==='INITIAL_SESSION'||event==='SIGNED_IN'){
+      if(session&&!A.user){
+        A.user=session.user;
+        await loadProfile();
+        await loadRounds();
+        initRealtime();
+      }
+      // ripulisci hash dall'URL se presente
+      if(window.location.hash&&window.location.hash.includes('access_token')){
+        history.replaceState(null,'',window.location.pathname);
+      }
+    }
+    if(event==='SIGNED_OUT'){
+      A.user=null;A.profile=null;A.rounds=[];
+    }
+    A.loading=false;
+    render();
+  });
 }
 
 async function loadProfile(){
@@ -364,20 +370,7 @@ async function signOut(){
   render();
 }
 
-// ascolta cambio sessione (magic link redirect)
-sb.auth.onAuthStateChange(async(event,session)=>{
-  if(event==="SIGNED_IN"&&session&&!A.user){
-    A.user=session.user;
-    await loadProfile();
-    await loadRounds();
-    initRealtime();
-    if(window.location.hash&&window.location.hash.includes("access_token")){
-      history.replaceState(null,"",window.location.pathname);
-    }
-    render();
-  }
-  if(event==="SIGNED_OUT"){A.user=null;A.profile=null;A.rounds=[];render();}
-});
+
 
 // ── Supabase data ─────────────────────────────────────────────
 async function loadRounds(){
