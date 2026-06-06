@@ -326,14 +326,21 @@ window.A=A;
 
 // ── Auth ──────────────────────────────────────────────────────
 async function initAuth(){
+  // il client Supabase JS gestisce automaticamente il token dall'URL (#access_token=...)
+  // ma serve aspettare che lo abbia processato prima di chiamare getSession
   const {data:{session}}=await sb.auth.getSession();
   if(session){
     A.user=session.user;
     await loadProfile();
+    await loadRounds();
+    initRealtime();
   }
   A.loading=false;
   render();
-  if(A.user) initRealtime();
+  // ripulisci l'URL dai token dopo il login via magic link
+  if(window.location.hash&&window.location.hash.includes('access_token')){
+    history.replaceState(null,'',window.location.pathname);
+  }
 }
 
 async function loadProfile(){
@@ -358,14 +365,18 @@ async function signOut(){
 }
 
 // ascolta cambio sessione (magic link redirect)
-sb.auth.onAuthStateChange(async(_,session)=>{
-  if(session&&!A.user){
+sb.auth.onAuthStateChange(async(event,session)=>{
+  if(event==="SIGNED_IN"&&session&&!A.user){
     A.user=session.user;
     await loadProfile();
     await loadRounds();
     initRealtime();
+    if(window.location.hash&&window.location.hash.includes("access_token")){
+      history.replaceState(null,"",window.location.pathname);
+    }
     render();
   }
+  if(event==="SIGNED_OUT"){A.user=null;A.profile=null;A.rounds=[];render();}
 });
 
 // ── Supabase data ─────────────────────────────────────────────
@@ -801,7 +812,7 @@ async function resetAll(){
 }
 
 // ── AVVIO ─────────────────────────────────────────────────────
-initAuth().then(()=>{if(A.user)loadRounds().then(render);});
+initAuth();
 </script>
 </body>
 </html>
