@@ -189,8 +189,10 @@ const ISO = {
 };
 const flagImg=(name,w=22)=>{
   const c=ISO[name];
-  if(!c) return `<span style="display:inline-block;width:${w}px;height:${Math.round(w*2/3)}px;background:var(--line);border-radius:2px"></span>`;
-  return `<img src="https://flagcdn.com/w${w}/${c}.png" alt="${name}" width="${w}" height="${Math.round(w*2/3)}" loading="lazy" style="border-radius:2px;object-fit:cover;border:1px solid rgba(255,255,255,.08)">`;
+  const h=Math.round(w*2/3);
+  if(!c) return `<span style="display:inline-block;width:${w}px;height:${h}px;background:var(--line);border-radius:2px;flex:none"></span>`;
+  // usa srcset per supporto retina, fallback su onerror
+  return `<img src="https://flagcdn.com/w${w*2}/${c}.png" alt="${name}" width="${w}" height="${h}" loading="lazy" style="border-radius:2px;object-fit:cover;border:1px solid rgba(255,255,255,.08);flex:none;min-width:${w}px" onerror="this.style.display='none'">`;
 };
 
 // ── Calendario partite (statico) ──────────────────────────────
@@ -325,27 +327,41 @@ const A={
 window.A=A;
 
 // ── Auth ──────────────────────────────────────────────────────
-function initAuth(){
-  // onAuthStateChange gestisce sia sessioni preesistenti (INITIAL_SESSION)
-  // sia nuovi login via magic link (SIGNED_IN) — unico punto di verità
+async function initAuth(){
+  // Leggi la sessione direttamente da localStorage — sincrono e affidabile
+  const storageKey = Object.keys(localStorage).find(k=>k.startsWith('sb-')&&k.endsWith('-auth-token'));
+  const stored = storageKey ? JSON.parse(localStorage.getItem(storageKey)||'null') : null;
+
+  if(stored?.access_token){
+    // Sessione trovata in localStorage — verifica con Supabase
+    const {data:{user},error} = await sb.auth.getUser(stored.access_token);
+    if(user&&!error){
+      A.user = user;
+      await loadProfile();
+      await loadRounds();
+      initRealtime();
+    }
+  }
+
+  A.loading = false;
+  render();
+
+  // Ascolta nuovi login e logout
   sb.auth.onAuthStateChange(async(event,session)=>{
-    if(event==='INITIAL_SESSION'||event==='SIGNED_IN'){
-      if(session&&!A.user){
-        A.user=session.user;
-        await loadProfile();
-        await loadRounds();
-        initRealtime();
-      }
-      // ripulisci hash dall'URL se presente
+    if(event==='SIGNED_IN'&&session&&!A.user){
+      A.user=session.user;
+      await loadProfile();
+      await loadRounds();
+      initRealtime();
       if(window.location.hash&&window.location.hash.includes('access_token')){
         history.replaceState(null,'',window.location.pathname);
       }
+      render();
     }
     if(event==='SIGNED_OUT'){
       A.user=null;A.profile=null;A.rounds=[];
+      render();
     }
-    A.loading=false;
-    render();
   });
 }
 
@@ -367,12 +383,39 @@ async function signOut(){
 // ── Supabase data ─────────────────────────────────────────────
 async function loadRounds(){
   const {data}=await sb.from('rounds')
-    .select(`*, proposals(*), votes(*), round_matches(match_id)`)
+    .select(`*, proposals(*), votes(*), round_matches(id, match_id, matches(id,date,team_home,team_away))`)
     .order('created_at',{ascending:true});
   A.rounds=data||[];
-  // ricostruisci roundMatches dal round corrente
-  const cur=A.rounds[A.rounds.length-1];
-  if(cur) A.roundMatches=new Set((cur.round_matches||[]).map(rm=>rm.match_id));
+}
+
+// Ritorna il round target per la selezione partite:
+// - se round corrente è 'open' → round corrente
+// - se 'voting'/'closed' o nessun round → null (partite saranno per il prossimo round da creare)
+function targetRound(){
+  const r=cur();
+  if(!r||r.status==='voting'||r.status==='closed') return null;
+  return r; // status === 'open'
+}
+
+// Ritorna set di match_id DB già selezionati per il round target
+function targetRoundMatchIds(){
+  const r=targetRound();
+  if(!r) return new Set();
+  return new Set((r.round_matches||[]).map(rm=>rm.match_id));
+}
+
+// Ritorna indici locali MATCHES selezionati per visualizzazione
+function targetMatchLocalIds(){
+  const r=targetRound();
+  if(!r) return new Set();
+  const ids=new Set();
+  (r.round_matches||[]).forEach(rm=>{
+    if(rm.matches){
+      const idx=MATCHES.findIndex(m=>m.home===rm.matches.team_home&&m.away===rm.matches.team_away);
+      if(idx>=0) ids.add(idx);
+    }
+  });
+  return ids;
 }
 
 function initRealtime(){
@@ -457,20 +500,29 @@ A.setOutcome=async(propId,outcome)=>{
 A.nextRound=async()=>{await A.startRound();A.setView('turno');};
 
 A.toggleMatch=async(matchId)=>{
-  const r=cur();
-  if(!r){showToast('Nessun round attivo');return;}
-  // cerca nel DB l'id della partita corrispondente all'indice
-  const {data:matchRows}=await sb.from('matches').select('id').eq('date',MATCHES[matchId].date)
-    .eq('team_home',MATCHES[matchId].home).eq('team_away',MATCHES[matchId].away).limit(1);
+  const m=MATCHES[matchId];
+  // cerca match nel DB
+  const {data:matchRows}=await sb.from('matches').select('id')
+    .eq('date',m.date).eq('team_home',m.home).eq('team_away',m.away).limit(1);
   if(!matchRows||!matchRows.length){showToast('Partita non trovata nel DB');return;}
   const dbMatchId=matchRows[0].id;
+
+  let r=targetRound();
+
+  // se non c'è un round open, non possiamo ancora associare partite
+  // (il round viene creato dall'admin con startRound)
+  if(!r){
+    showToast('Avvia prima il round per selezionare le partite');
+    return;
+  }
+
   const existing=(r.round_matches||[]).find(rm=>rm.match_id===dbMatchId);
   if(existing){
     await sb.from('round_matches').delete().eq('round_id',r.id).eq('match_id',dbMatchId);
-    showToast(`${MATCHES[matchId].home} – ${MATCHES[matchId].away} rimossa`);
+    showToast(`${m.home} – ${m.away} rimossa`);
   } else {
     await sb.from('round_matches').insert({round_id:r.id,match_id:dbMatchId});
-    showToast(`${MATCHES[matchId].home} – ${MATCHES[matchId].away} aggiunta ✓`);
+    showToast(`${m.home} – ${m.away} aggiunta ✓`);
   }
   await loadRounds();render();
 };
@@ -663,19 +715,22 @@ function viewTurno(){
 // ── VIEW: CALENDARIO ─────────────────────────────────────────
 function viewCalendario(){
   const r=cur();
-  const roundMatchIds=new Set();
-  if(r)(r.round_matches||[]).forEach(rm=>{
-    // mappa db match id -> indice locale
-    const idx=MATCHES.findIndex(m=>m.home===rm.team_home&&m.away===rm.team_away);
-    if(idx>=0)roundMatchIds.add(idx);
-  });
+  const tRound=targetRound();
+  const localIds=targetMatchLocalIds();
+  const today=todayISO();
 
-  // round summary
-  const selMatches=[...roundMatchIds].map(i=>MATCHES[i]).sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time));
+  // etichetta round summary
+  const summaryTitle = tRound
+    ? `Round corrente · ${fmtDay(tRound.date)}`
+    : r&&(r.status==='voting'||r.status==='closed')
+      ? `Prossimo round · seleziona partite`
+      : `Seleziona partite del round`;
+
+  const selMatches=[...localIds].map(i=>MATCHES[i]).sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time));
   let h=`<div class="round-summary">
-    <div class="rs-title">Round corrente${r?` · ${fmtDay(r.date)}`:''}</div>`;
+    <div class="rs-title">${summaryTitle}</div>`;
   if(!selMatches.length){
-    h+=`<div class="rs-empty">Tocca una partita per aggiungerla al round</div>`;
+    h+=`<div class="rs-empty">${tRound?'Tocca una partita per aggiungerla al round':'Avvia prima il round nel tab Turno'}</div>`;
   } else {
     selMatches.forEach(m=>{
       h+=`<div class="rs-row">
@@ -687,27 +742,26 @@ function viewCalendario(){
   }
   h+=`</div>`;
 
-  // phase filter
   const PHASES=['Tutti','Gironi','Sedicesimi','Ottavi','Quarti','Semifinale','Finale 3° posto','Finale'];
   h+=`<div class="phase-scroll">${PHASES.map(p=>`<button class="phase-pill ${A.calPhase===p?'active':''}" onclick="A.calPhase='${p}';render()">${p}</button>`).join('')}</div>`;
 
   const filtered=A.calPhase==='Tutti'?MATCHES:MATCHES.filter(m=>m.stage===A.calPhase);
   const grouped={};
   filtered.forEach(m=>{if(!grouped[m.date])grouped[m.date]=[];grouped[m.date].push(m);});
-  const today=todayISO();
 
   Object.entries(grouped).sort(([a],[b])=>a.localeCompare(b)).forEach(([date,matches])=>{
     const isToday=date===today;
     const label=isToday?'Oggi':fmtDay(date);
-    const isRound=r&&r.date===date;
+    const isRound=tRound&&tRound.date===date;
     h+=`<div class="day-group">
       <div class="day-header">
         <div class="day-label">${label}</div>
         ${isRound?`<div class="round-badge">Round corrente</div>`:''}
       </div>`;
     matches.forEach(m=>{
-      const inRound=roundMatchIds.has(m.id);
-      h+=`<div class="match-row ${inRound?'in-round':''}" onclick="A.toggleMatch(${m.id})">
+      const inRound=localIds.has(m.id);
+      const canToggle=!!tRound;
+      h+=`<div class="match-row ${inRound?'in-round':''}" ${canToggle?`onclick="A.toggleMatch(${m.id})"`:''} style="${canToggle?'':'opacity:.5;cursor:default'}">
         <div class="match-time">${m.time}</div>
         <div class="match-teams">
           <div class="match-team">${flagImg(m.home)} <span class="tname">${esc(m.home)}</span></div>
@@ -715,7 +769,7 @@ function viewCalendario(){
         </div>
         <div class="match-tag">
           ${m.group?`<span class="group-tag">Gr. ${m.group}</span>`:`<span class="stage-tag">${esc(m.stage)}</span>`}
-          <span class="add-ind">${inRound?'● nel round':'+ aggiungi'}</span>
+          ${canToggle?`<span class="add-ind">${inRound?'● nel round':'+ aggiungi'}</span>`:''}
         </div>
       </div>`;
     });
