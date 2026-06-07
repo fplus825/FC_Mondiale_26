@@ -57,9 +57,9 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
 .proposal .txt{font-weight:700;font-size:14.5px;line-height:1.35}
 .proposal.winner{border-color:var(--gold);background:linear-gradient(180deg,rgba(255,206,69,.14),#08160f)}
 .proposal.winner .tag{background:var(--gold);color:#2a1f00}
-.votefill{position:absolute;left:0;bottom:0;height:4px;background:var(--pitch);transition:width .5s cubic-bezier(.2,.8,.2,1)}
-.proposal.winner .votefill{background:var(--gold)}
-.votecount{position:absolute;right:12px;top:12px;font-weight:900;font-size:13px;color:var(--pitch)}
+.votefill{position:absolute;left:0;bottom:0;height:20px;background:rgba(182,255,60,.18);transition:width .5s cubic-bezier(.2,.8,.2,1);display:flex;align-items:center;justify-content:flex-end;padding-right:8px;border-radius:0 4px 0 0}
+.proposal.winner .votefill{background:rgba(255,206,69,.18)}
+.votecount{position:absolute;bottom:2px;right:10px;font-weight:900;font-size:11px;color:var(--pitch);z-index:1;line-height:16px}
 .proposal.winner .votecount{color:var(--gold)}
 .voter{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}
 .voter:last-child{border-bottom:none}
@@ -489,6 +489,7 @@ A.saveProposal=async()=>{
   // raccogli dati dal form
   const giocata=parseFloat(document.getElementById('prop-giocata')?.value)||null;
   const vincita=parseFloat(document.getElementById('prop-vincita')?.value)||null;
+  if(!giocata||!vincita){showToast('Inserisci giocata e vincita potenziale');return;}
 
   // raccogli le partite con scommessa e quota
   const roundMatches=(r.round_matches||[]).map(rm=>rm.matches).filter(Boolean);
@@ -898,7 +899,7 @@ function viewTurno(){
         ${pmDetail||esc(p.text)}
         ${p.giocata?`<div style="font-size:10px;color:var(--muted);margin-top:4px;padding-top:3px;border-top:1px solid var(--line)">Giocata €${p.giocata}${p.vincita_pot?' · Vincita pot. €'+p.vincita_pot:''}</div>`:''}
       </div>
-      ${totalVotes>0||r.status==='closed'?`<div class="votecount">${cnt}</div><div class="votefill" style="width:${pct}%"></div>`:''}
+      ${totalVotes>0||r.status==='closed'?`<div class="votefill" style="width:${pct}%"></div><div class="votecount">${cnt} vot${cnt===1?'o':'i'}</div>`:''}
     </div>`;
   });
 
