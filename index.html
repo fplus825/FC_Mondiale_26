@@ -18,6 +18,7 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
     linear-gradient(180deg,var(--bg),var(--bg2));
   background-attachment:fixed;}
 .wrap{max-width:560px;margin:0 auto;padding:18px 16px 120px;position:relative}
+.sticky-top{position:sticky;top:0;z-index:50;background:var(--bg);padding-top:18px;margin-top:-18px}
 .header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:6px 0 18px;animation:rise .6s ease both}
 .brand-kicker{font-size:11px;letter-spacing:.32em;text-transform:uppercase;color:var(--pitch-dim);font-weight:700}
 .brand{font-family:'Anton',sans-serif;font-size:40px;line-height:.86;letter-spacing:.5px;margin-top:2px}
@@ -95,11 +96,12 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
 /* ── Calendario ── */
 .phase-scroll{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:14px;scrollbar-width:none}
 .phase-scroll::-webkit-scrollbar{display:none}
+.cal-sticky{position:sticky;top:var(--sticky-offset,130px);z-index:20;background:var(--bg);padding-bottom:4px}
 .phase-pill{flex:none;cursor:pointer;font-size:11px;font-weight:800;padding:6px 12px;border-radius:999px;
   border:1px solid var(--line);color:var(--muted);background:var(--card);white-space:nowrap;transition:.15s;font-family:inherit}
 .phase-pill.active{background:var(--pitch);color:#06110b;border-color:var(--pitch)}
 .day-group{margin-bottom:4px}
-.day-header{display:flex;align-items:center;gap:10px;padding:10px 4px 6px;position:sticky;top:0;z-index:10;
+.day-header{display:flex;align-items:center;gap:10px;padding:10px 4px 6px;position:sticky;top:var(--day-top,220px);z-index:10;
   background:linear-gradient(180deg,var(--bg) 80%,transparent);backdrop-filter:blur(2px)}
 .day-header .day-label{font-family:'Anton',sans-serif;font-size:17px;letter-spacing:.3px;flex:1}
 .round-badge{font-size:10px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;
@@ -389,7 +391,7 @@ async function signOut(){
 async function loadRounds(){
   const [{data:rounds},{data:couples}]=await Promise.all([
     sb.from('rounds')
-      .select(`*, proposals(*), votes(*), round_matches(id, match_id, matches(id,date,team_home,team_away))`)
+      .select(`*, proposals(*, proposal_matches(*, matches(id,date,time,team_home,team_away))), votes(*), round_matches(id, match_id, matches(id,date,team_home,team_away))`)
       .order('created_at',{ascending:true}),
     sb.from('couples').select('id,name,order_index,member_1,member_2').order('order_index'),
   ]);
@@ -466,14 +468,47 @@ A.startRound=async()=>{
   else{await loadRounds();render();}
 };
 
-A.saveProposals=async()=>{
-  const p=[0,1,2].map(i=>(document.getElementById('p'+i).value||'').trim());
-  if(p.filter(Boolean).length<3){showToast('Inserisci tutte e 3 le scommesse');return;}
+A.saveProposal=async()=>{
   const r=cur();
-  const rows=p.map(text=>({round_id:r.id,couple_id:r.couple_id,author_id:A.user.id,text}));
-  const {error}=await sb.from('proposals').insert(rows);
+  if(!r||r.status!=='open'){showToast('Round non in stato open');return;}
+  const existing=(r.proposals||[]).filter(p=>!p._draft);
+  if(existing.length>=5){showToast('Massimo 5 proposte per round');return;}
+
+  // raccogli dati dal form
+  const giocata=parseFloat(document.getElementById('prop-giocata')?.value)||null;
+  const vincita=parseFloat(document.getElementById('prop-vincita')?.value)||null;
+
+  // raccogli le partite con scommessa e quota
+  const roundMatches=(r.round_matches||[]).map(rm=>rm.matches).filter(Boolean);
+  const matchRows=[];
+  for(const m of roundMatches){
+    const scommessa=(document.getElementById('scommessa-'+m.id)?.value||'').trim();
+    const quota=parseFloat(document.getElementById('quota-'+m.id)?.value)||null;
+    if(scommessa) matchRows.push({match_id:m.id,scommessa,quota});
+  }
+  if(!matchRows.length){showToast('Inserisci almeno una scommessa');return;}
+
+  // inserisci proposal
+  const {data:prop,error:e1}=await sb.from('proposals')
+    .insert({round_id:r.id,couple_id:r.couple_id,author_id:A.user.id,
+             text:matchRows.map(m=>m.scommessa).join(' + '),
+             giocata,vincita_pot:vincita})
+    .select().single();
+  if(e1){showToast('Errore: '+e1.message);return;}
+
+  // inserisci proposal_matches
+  const pmRows=matchRows.map(m=>({proposal_id:prop.id,match_id:m.match_id,scommessa:m.scommessa,quota:m.quota}));
+  const {error:e2}=await sb.from('proposal_matches').insert(pmRows);
+  if(e2){showToast('Errore: '+e2.message);return;}
+
+  showToast('Proposta salvata ✓');
+  await loadRounds();render();
+};
+
+A.openVoting=async()=>{
+  const r=cur();
+  const {error}=await sb.from('rounds').update({status:'voting'}).eq('id',r.id);
   if(error){showToast('Errore: '+error.message);return;}
-  await sb.from('rounds').update({status:'voting'}).eq('id',r.id);
   await loadRounds();render();
 };
 
@@ -571,17 +606,19 @@ function render(){
 
   const tabs=[['turno','Turno'],['calendario','Calendario'],['storico','Storico'],['classifica','Classifica'],['coppie','Coppie']];
   let html=`
-  <div class="header">
-    <div>
-      <div class="brand-kicker">Pool scommesse · 4 coppie</div>
-      <div class="brand">FC <span class="b2">MONDIALI</span></div>
+  <div class="sticky-top">
+    <div class="header">
+      <div>
+        <div class="brand-kicker">Pool scommesse · 4 coppie</div>
+        <div class="brand">FC <span class="b2">MONDIALI</span></div>
+      </div>
+      <div class="user-chip" onclick="signOut()">
+        <div class="dot"></div>${esc(A.profile?.name||A.user.email.split('@')[0])}
+      </div>
     </div>
-    <div class="user-chip" onclick="signOut()">
-      <div class="dot"></div>${esc(A.profile?.name||A.user.email.split('@')[0])}
+    <div class="tabs">
+      ${tabs.map(([k,l])=>`<button class="tab ${A.view===k?'active':''}" onclick="A.setView('${k}')">${l}</button>`).join('')}
     </div>
-  </div>
-  <div class="tabs">
-    ${tabs.map(([k,l])=>`<button class="tab ${A.view===k?'active':''}" onclick="A.setView('${k}')">${l}</button>`).join('')}
   </div>`;
 
   if(A.view==='turno')       html+=viewTurno();
@@ -671,20 +708,79 @@ function viewTurno(){
   </div>`;
 
   if(r.status==='draft'){
-    h+=`<div class="card"><div class="sub center" style="color:var(--muted)">Round in preparazione — seleziona le partite nel tab Calendario, poi avvia il round.</div></div>`;
+    const nextCouple=A.couples[A.rounds.filter(r=>r.status!=='draft').length%COUPLES.length];
+    const nextCoupleName=nextCouple?COUPLES.find(c=>c.name===nextCouple.name)?.name||nextCouple.name:COUPLES[0].name;
+    h+=`<div class="card glow center">
+      <div class="sub" style="margin-bottom:12px">Partite selezionate nel calendario. Quando sei pronto avvia il round.</div>
+      <button class="btn btn-primary" onclick="A.startRound()">Avvia il turno · ${esc(nextCoupleName)}</button>
+    </div>`;
     return h;
   }
 
   if(r.status==='open'){
+    const roundMatchesList=(r.round_matches||[]).map(rm=>rm.matches).filter(Boolean)
+      .sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time));
+    const savedProposals=r.proposals||[];
+
     if(isProposer){
-      h+=`<div class="card glow">
-        <div class="eyebrow">Le 3 scommesse di ${esc(couple.name)}</div>
-        <div class="sub" style="margin-bottom:12px">Scrivete 3 scommesse diverse.</div>
-        ${[0,1,2].map(i=>`<div style="display:flex;gap:9px;align-items:center;margin-bottom:9px">
-          <div style="font-family:'Anton';font-size:20px;color:var(--pitch);width:18px">${L(i)}</div>
-          <input id="p${i}" class="input" placeholder="Scommessa ${L(i)}"></div>`).join('')}
-        <button class="btn btn-primary" style="margin-top:12px" onclick="A.saveProposals()">Blocca le proposte e apri la votazione</button>
-      </div>`;
+      // mostra proposte già salvate
+      if(savedProposals.length){
+        h+=`<div class="card"><div class="eyebrow">Proposte inserite (${savedProposals.length}/5)</div>`;
+        savedProposals.forEach((p,i)=>{
+          const pms=p.proposal_matches||[];
+          h+=`<div class="proposal">
+            <div class="tag">${L(i)}</div>
+            <div class="txt">${pms.map(pm=>`${esc(pm.scommessa)}${pm.quota?' @'+pm.quota:''}`).join(' + ')}</div>
+            ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:4px">Giocata: €${p.giocata}${p.vincita_pot?' · Vincita pot.: €'+p.vincita_pot:''}</div>`:''}
+          </div>`;
+        });
+        h+=`</div>`;
+      }
+
+      // form nuova proposta (se < 5)
+      if(savedProposals.length<5){
+        h+=`<div class="card glow">
+          <div class="eyebrow">Nuova proposta ${savedProposals.length+1}/5</div>
+          <div class="sub" style="margin-bottom:14px">Seleziona le scommesse sulle partite del round.</div>`;
+
+        if(!roundMatchesList.length){
+          h+=`<div class="note" style="margin-bottom:12px">Nessuna partita nel round — aggiungile dal tab Calendario.</div>`;
+        } else {
+          roundMatchesList.forEach(m=>{
+            h+=`<div style="background:#08160f;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+                ${flagImg(m.team_home)} <span style="font-weight:800;font-size:13px">${esc(m.team_home)}</span>
+                <span style="color:var(--muted);font-size:11px;font-weight:700">vs</span>
+                ${flagImg(m.team_away)} <span style="font-weight:800;font-size:13px">${esc(m.team_away)}</span>
+                <span style="margin-left:auto;font-size:11px;color:var(--muted);font-family:'Anton'">${m.time}</span>
+              </div>
+              <input id="scommessa-${m.id}" class="input" placeholder="Scommessa (es. 1X, Over 2.5…)" style="margin-bottom:8px">
+              <input id="quota-${m.id}" class="input" placeholder="Quota (es. 2.50)" type="number" step="0.01" min="1" style="max-width:140px">
+            </div>`;
+          });
+        }
+
+        h+=`<div style="display:flex;gap:9px;margin-bottom:12px">
+          <div style="flex:1">
+            <div class="eyebrow" style="margin-bottom:4px">Giocata €</div>
+            <input id="prop-giocata" class="input" type="number" step="0.01" min="0" placeholder="0.00">
+          </div>
+          <div style="flex:1">
+            <div class="eyebrow" style="margin-bottom:4px">Vincita potenziale €</div>
+            <input id="prop-vincita" class="input" type="number" step="0.01" min="0" placeholder="0.00">
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="A.saveProposal()">Conferma proposta</button>
+        </div>`;
+      }
+
+      // tasto per aprire votazione
+      if(savedProposals.length>0){
+        h+=`<div class="card">
+          <div class="sub" style="margin-bottom:12px">Quando hai finito di inserire le proposte, apri la votazione.</div>
+          <button class="btn btn-coral" onclick="A.openVoting()">Apri la votazione (${savedProposals.length} proposta${savedProposals.length>1?'e':''})</button>
+        </div>`;
+      }
     } else {
       h+=`<div class="card"><div class="sub center">In attesa delle proposte di ${esc(couple.name)}…</div></div>`;
     }
@@ -785,7 +881,7 @@ function viewCalendario(){
   h+=`</div>`;
 
   const PHASES=['Tutti','Gironi','Sedicesimi','Ottavi','Quarti','Semifinale','Finale 3° posto','Finale'];
-  h+=`<div class="phase-scroll">${PHASES.map(p=>`<button class="phase-pill ${A.calPhase===p?'active':''}" onclick="A.calPhase='${p}';render()">${p}</button>`).join('')}</div>`;
+  h=`<div class="cal-sticky">${h}<div class="phase-scroll">${PHASES.map(p=>`<button class="phase-pill ${A.calPhase===p?'active':''}" onclick="A.calPhase='${p}';render()">${p}</button>`).join('')}</div></div>`;
 
   const filtered=A.calPhase==='Tutti'?MATCHES:MATCHES.filter(m=>m.stage===A.calPhase);
   const grouped={};
