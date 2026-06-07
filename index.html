@@ -23,7 +23,7 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
 .brand-kicker{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--pitch-dim);font-weight:700;white-space:nowrap}
 .brand{font-family:'Anton',sans-serif;font-size:28px;line-height:.9;letter-spacing:.5px;margin-top:2px;white-space:nowrap}
 .brand .b2{color:var(--pitch)}
-.user-chip{display:flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:6px 12px 6px 8px;font-size:12px;font-weight:800;cursor:pointer}
+.user-chip{display:flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:6px 12px 6px 8px;font-size:12px;font-weight:800;cursor:pointer;margin-right:2px}
 .user-chip .dot{width:8px;height:8px;border-radius:50%;background:var(--pitch);flex:none}
 .tabs{display:flex;gap:4px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:5px;margin-bottom:18px;animation:rise .6s .05s ease both;overflow-x:auto;scrollbar-width:none}
 .tabs::-webkit-scrollbar{display:none}
@@ -37,7 +37,7 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
 .h2{font-weight:900;font-size:17px}
 .sub{color:var(--muted);font-size:13px;line-height:1.5}
 .turnbar{display:flex;align-items:center;gap:12px}
-.turnbar .num{font-family:'Anton',sans-serif;font-size:30px;color:var(--bg2);width:54px;height:54px;border-radius:14px;display:grid;place-items:center;background:var(--pitch);flex:none}
+.turnbar .num{font-family:'Anton',sans-serif;font-size:30px;color:var(--bg2);min-width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:var(--pitch);flex:none}
 .turnbar .right{margin-left:auto;text-align:right}
 .daterow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
 .input,.date,textarea{width:100%;background:#08160f;border:1px solid var(--line);color:var(--ink);border-radius:11px;padding:12px 13px;font-size:15px;font-family:inherit;font-weight:600;outline:none;transition:.15s}
@@ -91,6 +91,8 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
 .badge.lost{background:rgba(255,90,60,.15);color:var(--coral)}
 .badge.pend{background:rgba(255,255,255,.07);color:var(--muted)}
 .note{font-size:12px;color:var(--muted);line-height:1.5}
+.fields-row{display:flex;gap:9px;align-items:flex-end}
+@media(max-width:420px){.fields-row{flex-direction:column;align-items:stretch}}
 .center{text-align:center}
 .pop{animation:pop .35s ease both}
 /* ── Calendario ── */
@@ -119,6 +121,9 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
 .match-team{display:flex;align-items:center;gap:7px}
 .match-team img{width:22px;height:15px;border-radius:2px;object-fit:cover;border:1px solid rgba(255,255,255,.08);flex:none}
 .match-team .tname{font-weight:800;font-size:13px;line-height:1}
+.match-header{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.match-header .mdate{font-size:11px;color:var(--muted);font-family:'Anton';white-space:nowrap}
+@media(max-width:420px){.match-header{flex-direction:column;align-items:flex-start;gap:4px}}
 .match-tag{flex:none;margin-left:8px;display:flex;flex-direction:column;align-items:flex-end;gap:3px}
 .group-tag{font-size:9.5px;font-weight:900;letter-spacing:.1em;text-transform:uppercase;
   padding:3px 7px;border-radius:6px;background:rgba(182,255,60,.1);color:var(--pitch-dim);border:1px solid rgba(182,255,60,.2)}
@@ -310,7 +315,7 @@ MATCHES.forEach((m,i)=>m.id=i);
 
 // ── Helpers ───────────────────────────────────────────────────
 const todayISO=()=>new Date().toISOString().slice(0,10);
-const fmtDate=(iso)=>{try{return new Date(iso+"T00:00:00").toLocaleDateString("it-IT",{weekday:"short",day:"numeric",month:"short"});}catch(e){return iso;}};
+const fmtDate=(iso)=>{try{const d=new Date(iso+"T00:00:00");return String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0');}catch(e){return iso;}};
 const fmtDay=(iso)=>{try{return new Date(iso+"T12:00:00").toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long"});}catch(e){return iso;}};
 const esc=(s)=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const L=(i)=>String.fromCharCode(65+i);
@@ -643,7 +648,7 @@ function render(){
         <div class="brand-kicker">Pool scommesse · FIFA WC 2026</div>
         <div class="brand">FC <span class="b2">MONDIALI</span></div>
       </div>
-      <div class="user-chip" onclick="signOut()" style="flex:none;max-width:120px;overflow:hidden">
+      <div class="user-chip" onclick="signOut()" style="flex:none;max-width:130px;overflow:hidden;align-self:center">
         <div class="dot"></div><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(A.profile?.name||A.user.email.split('@')[0])}</span>
       </div>
     </div>
@@ -725,15 +730,17 @@ function viewTurno(){
 
   let h=`<div class="card glow">
     <div class="turnbar">
-      <div class="num">${A.rounds.length}</div>
       <div>
-        <div class="eyebrow" style="margin:0">Turno · propone</div>
-        <div class="h2" style="color:var(--pitch)">${esc(couple.name)}</div>
-        <div class="sub">${esc(couple.members.join(' & '))}</div>
+        <div class="eyebrow" style="margin:0">Turno</div>
+        <div class="num" style="width:auto;padding:0 10px;margin-top:2px">${A.rounds.length}</div>
       </div>
-      <div class="right">
-        <div class="eyebrow" style="margin:0">Data</div>
-        <div style="font-weight:800;font-size:13px">${fmtDate(r.date)}</div>
+      <div style="flex:1;min-width:0">
+        <div class="eyebrow" style="margin:0">propone</div>
+        <div style="font-weight:900;font-size:14px;color:var(--pitch);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px">${esc(couple.name)}</div>
+        <div class="sub" style="font-size:11px">${esc(couple.members.join(' & '))}</div>
+      </div>
+      <div class="right" style="flex:none">
+        <div style="font-family:'Anton';font-size:16px">${fmtDate(r.date)}</div>
       </div>
     </div>
   </div>`;
@@ -759,11 +766,21 @@ function viewTurno(){
       if(savedProposals.length){
         h+=`<div class="card"><div class="eyebrow">Proposte inserite (${savedProposals.length}/5)</div>`;
         savedProposals.forEach((p,i)=>{
-          const pms=p.proposal_matches||[];
+          const pms=(p.proposal_matches||[]).sort((a,b)=>{
+            const ma=a.matches,mb=b.matches;
+            if(!ma||!mb)return 0;
+            return (ma.date+ma.time).localeCompare(mb.date+mb.time);
+          });
+          const pmRows=pms.map(pm=>`
+            <div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--line)">
+              ${pm.matches?flagImg(pm.matches.team_home,18)+''+flagImg(pm.matches.team_away,18):''}
+              <span style="flex:1;font-size:12px;font-weight:700">${esc(pm.scommessa)}</span>
+              ${pm.quota?`<span style="font-size:12px;color:var(--pitch);font-weight:900">@${pm.quota}</span>`:''}
+            </div>`).join('');
           h+=`<div class="proposal">
             <div class="tag">${L(i)}</div>
-            <div class="txt">${pms.map(pm=>`${esc(pm.scommessa)}${pm.quota?' @'+pm.quota:''}`).join(' + ')}</div>
-            ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:4px">Giocata: €${p.giocata}${p.vincita_pot?' · Vincita pot.: €'+p.vincita_pot:''}</div>`:''}
+            <div class="txt" style="font-size:12px">${pmRows||'—'}</div>
+            ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:4px;border-top:1px solid var(--line)">Giocata: €${p.giocata}${p.vincita_pot?' · Vincita pot.: €'+p.vincita_pot:''}</div>`:''}
           </div>`;
         });
         h+=`</div>`;
@@ -779,12 +796,15 @@ function viewTurno(){
           h+=`<div class="note" style="margin-bottom:12px">Nessuna partita nel round — aggiungile dal tab Calendario.</div>`;
         } else {
           roundMatchesList.forEach(m=>{
+            const mDate=fmtDate(m.date);
             h+=`<div style="background:#08160f;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px">
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-                ${flagImg(m.team_home)} <span style="font-weight:800;font-size:13px">${esc(m.team_home)}</span>
-                <span style="color:var(--muted);font-size:11px;font-weight:700">vs</span>
-                ${flagImg(m.team_away)} <span style="font-weight:800;font-size:13px">${esc(m.team_away)}</span>
-                <span style="margin-left:auto;font-size:11px;color:var(--muted);font-family:'Anton'">${m.time}</span>
+              <div class="match-header">
+                <span class="mdate">${mDate} · ${m.time.slice(0,5)}</span>
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                  ${flagImg(m.team_home)} <span style="font-weight:800;font-size:13px">${esc(m.team_home)}</span>
+                  <span style="color:var(--muted);font-size:11px;font-weight:700">vs</span>
+                  ${flagImg(m.team_away)} <span style="font-weight:800;font-size:13px">${esc(m.team_away)}</span>
+                </div>
               </div>
               <input id="scommessa-${m.id}" class="input" placeholder="Scommessa (es. 1X, Over 2.5…)" style="margin-bottom:8px">
               <div style="display:flex;align-items:center;gap:8px">
@@ -795,7 +815,7 @@ function viewTurno(){
           });
         }
 
-        h+=`<div style="display:flex;gap:9px;margin-bottom:12px">
+        h+=`<div class="fields-row" style="margin-bottom:12px">
           <div style="flex:1">
             <div class="eyebrow" style="margin-bottom:4px">Giocata €</div>
             <input id="prop-giocata" class="input" type="number" step="0.01" min="0" placeholder="0.00">
