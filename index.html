@@ -187,12 +187,14 @@ const ISO = {
   'Portogallo':'pt','RD Congo':'cd','Inghilterra':'gb-eng','Croazia':'hr',
   'Ghana':'gh','Panama':'pa','Uzbekistan':'uz','Colombia':'co',
 };
+const FLAG_SIZES=[20,40,80,160];
 const flagImg=(name,w=22)=>{
   const c=ISO[name];
   const h=Math.round(w*2/3);
   if(!c) return `<span style="display:inline-block;width:${w}px;height:${h}px;background:var(--line);border-radius:2px;flex:none"></span>`;
-  // usa srcset per supporto retina, fallback su onerror
-  return `<img src="https://flagcdn.com/w${w*2}/${c}.png" alt="${name}" width="${w}" height="${h}" loading="lazy" style="border-radius:2px;object-fit:cover;border:1px solid rgba(255,255,255,.08);flex:none;min-width:${w}px" onerror="this.style.display='none'">`;
+  // usa la dimensione flagcdn più vicina >= w
+  const sz=FLAG_SIZES.find(s=>s>=w)||FLAG_SIZES[FLAG_SIZES.length-1];
+  return `<img src="https://flagcdn.com/w${sz}/${c}.png" alt="${name}" width="${w}" height="${h}" loading="lazy" style="border-radius:2px;object-fit:cover;border:1px solid rgba(255,255,255,.08);flex:none;min-width:${w}px" onerror="this.style.display='none'">`;
 };
 
 // ── Calendario partite (statico) ──────────────────────────────
@@ -320,7 +322,7 @@ const A={
   user:null,       // supabase user
   profile:null,    // {id,name,is_admin}
   rounds:[],       // da supabase
-  roundMatches:new Set(), // match ids nel round corrente
+  couples:[],     // da supabase
   calPhase:'Tutti',
   loading:true,
 };
@@ -348,8 +350,10 @@ async function initAuth(){
 
   // Ascolta nuovi login e logout
   sb.auth.onAuthStateChange(async(event,session)=>{
-    if(event==='SIGNED_IN'&&session&&!A.user){
+    if(event==='SIGNED_IN'&&session){
+      // permetti cambio utente: resetta stato precedente
       A.user=session.user;
+      A.profile=null;A.rounds=[];
       await loadProfile();
       await loadRounds();
       initRealtime();
@@ -373,6 +377,7 @@ async function loadProfile(){
 
 
 async function signOut(){
+  await destroyRealtime();
   await sb.auth.signOut();
   A.user=null;A.profile=null;A.rounds=[];
   render();
@@ -382,31 +387,38 @@ async function signOut(){
 
 // ── Supabase data ─────────────────────────────────────────────
 async function loadRounds(){
-  const {data}=await sb.from('rounds')
-    .select(`*, proposals(*), votes(*), round_matches(id, match_id, matches(id,date,team_home,team_away))`)
-    .order('created_at',{ascending:true});
-  A.rounds=data||[];
+  const [{data:rounds},{data:couples}]=await Promise.all([
+    sb.from('rounds')
+      .select(`*, proposals(*), votes(*), round_matches(id, match_id, matches(id,date,team_home,team_away))`)
+      .order('created_at',{ascending:true}),
+    sb.from('couples').select('id,name,order_index,member_1,member_2').order('order_index'),
+  ]);
+  A.rounds=rounds||[];
+  A.couples=couples||[];
 }
 
-// Ritorna il round target per la selezione partite:
-// - se round corrente è 'open' → round corrente
-// - se 'voting'/'closed' o nessun round → null (partite saranno per il prossimo round da creare)
+// Logica round target per selezione partite:
+// - nessun round        → round 1 da creare (draft automatico al primo tap)
+// - status 'draft'/'open' → round corrente modificabile
+// - status 'voting'/'closed' → round corrente bloccato, prossimo round selezionabile (draft)
 function targetRound(){
   const r=cur();
-  if(!r||r.status==='voting'||r.status==='closed') return null;
-  return r; // status === 'open'
+  if(!r) return null; // nessun round: tap creerà draft
+  if(r.status==='draft'||r.status==='open') return r;
+  return null; // voting/closed: tap creerà draft per round successivo
 }
 
-// Ritorna set di match_id DB già selezionati per il round target
-function targetRoundMatchIds(){
-  const r=targetRound();
-  if(!r) return new Set();
-  return new Set((r.round_matches||[]).map(rm=>rm.match_id));
+function canSelectMatches(){
+  const r=cur();
+  // si può sempre selezionare: o nessun round (round 1) o round in draft/open
+  // o round corrente in voting/closed (prepara il prossimo)
+  return true;
 }
 
 // Ritorna indici locali MATCHES selezionati per visualizzazione
 function targetMatchLocalIds(){
-  const r=targetRound();
+  // cerca il round in draft o open
+  const r=A.rounds.find(r=>r.status==='draft'||r.status==='open')||null;
   if(!r) return new Set();
   const ids=new Set();
   (r.round_matches||[]).forEach(rm=>{
@@ -418,24 +430,37 @@ function targetMatchLocalIds(){
   return ids;
 }
 
+let _realtimeChannel=null;
 function initRealtime(){
-  sb.channel('public-changes')
+  if(_realtimeChannel) return; // già sottoscritto
+  _realtimeChannel=sb.channel('public-changes')
     .on('postgres_changes',{event:'*',schema:'public',table:'rounds'},()=>loadRounds().then(render))
     .on('postgres_changes',{event:'*',schema:'public',table:'proposals'},()=>loadRounds().then(render))
     .on('postgres_changes',{event:'*',schema:'public',table:'votes'},()=>loadRounds().then(render))
     .on('postgres_changes',{event:'*',schema:'public',table:'round_matches'},()=>loadRounds().then(render))
     .subscribe();
 }
+async function destroyRealtime(){
+  if(_realtimeChannel){await sb.removeChannel(_realtimeChannel);_realtimeChannel=null;}
+}
 
 // ── Azioni round (scrivono su Supabase) ───────────────────────
 A.setView=(v)=>{A.view=v;render();};
 
 A.startRound=async()=>{
-  const idx=A.rounds.length%COUPLES.length;
-  const {data:coupleRows}=await sb.from('couples').select('id').order('order_index').range(idx,idx);
-  if(!coupleRows||!coupleRows.length){showToast('Coppie non trovate nel DB');return;}
+  // se esiste già un draft, portarlo a open
+  const draft=A.rounds.find(r=>r.status==='draft');
+  if(draft){
+    const {error}=await sb.from('rounds').update({status:'open',date:todayISO()}).eq('id',draft.id);
+    if(error){showToast('Errore: '+error.message);return;}
+    await loadRounds();render();return;
+  }
+  // altrimenti crea nuovo round open
+  const idx=A.rounds.filter(r=>r.status!=='draft').length%COUPLES.length;
+  const coupleId=A.couples[idx]?.id;
+  if(!coupleId){showToast('Coppie non trovate nel DB');return;}
   const {error}=await sb.from('rounds').insert({
-    date:todayISO(),couple_id:coupleRows[0].id,status:'open',created_by:A.user.id
+    date:todayISO(),couple_id:coupleId,status:'open',created_by:A.user.id
   });
   if(error)showToast('Errore: '+error.message);
   else{await loadRounds();render();}
@@ -507,13 +532,20 @@ A.toggleMatch=async(matchId)=>{
   if(!matchRows||!matchRows.length){showToast('Partita non trovata nel DB');return;}
   const dbMatchId=matchRows[0].id;
 
-  let r=targetRound();
-
-  // se non c'è un round open, non possiamo ancora associare partite
-  // (il round viene creato dall'admin con startRound)
+  // trova round draft/open esistente, o crea draft
+  let r=A.rounds.find(r=>r.status==='draft'||r.status==='open')||null;
   if(!r){
-    showToast('Avvia prima il round per selezionare le partite');
-    return;
+    // crea nuovo round in draft
+    const nextIdx=A.rounds.length%COUPLES.length;
+    const coupleId=A.couples[nextIdx]?.id;
+    if(!coupleId){showToast('Coppie non trovate nel DB');return;}
+    const {data:newRound,error}=await sb.from('rounds')
+      .insert({date:todayISO(),couple_id:coupleId,status:'draft',created_by:A.user.id})
+      .select().single();
+    if(error){showToast('Errore: '+error.message);return;}
+    await loadRounds();
+    r=A.rounds.find(r=>r.id===newRound.id);
+    if(!r){showToast('Errore nel trovare il round creato');return;}
   }
 
   const existing=(r.round_matches||[]).find(rm=>rm.match_id===dbMatchId);
@@ -609,14 +641,17 @@ function viewTurno(){
     </div>`;
   }
   const r=cur();
-  const coupleIdx=A.rounds.length-1<COUPLES.length?A.rounds.length-1:A.rounds.indexOf(r)%COUPLES.length;
-  // trova indice coppia dal numero di round
-  const cIdx=(A.rounds.length-1)%COUPLES.length;
-  const couple=COUPLES[cIdx];
+  // trova coppia dal DB usando couple_id del round
+  const dbCouple=A.couples.find(c=>c.id===r.couple_id);
+  const couple=dbCouple
+    ? {name:dbCouple.name, members:COUPLES.find(c=>c.name===dbCouple.name)?.members||[]}
+    : COUPLES[(A.rounds.length-1)%COUPLES.length];
   const proposals=r.proposals||[];
   const votes=r.votes||[];
   const myVote=votes.find(v=>v.user_id===A.user.id);
-  const isProposer=couple.members.some(m=>A.profile?.name===m);
+  // trova la coppia dal DB per confrontare per UUID
+  const dbCouple=A.couples.find(c=>c.id===r.couple_id);
+  const isProposer=dbCouple&&(dbCouple.member_1===A.user.id||dbCouple.member_2===A.user.id);
   const counts={};proposals.forEach(p=>{counts[p.id]=votes.filter(v=>v.proposal_id===p.id).length;});
   const totalVotes=votes.length;
   const maxC=Math.max(0,...Object.values(counts));
@@ -636,6 +671,11 @@ function viewTurno(){
       </div>
     </div>
   </div>`;
+
+  if(r.status==='draft'){
+    h+=`<div class="card"><div class="sub center" style="color:var(--muted)">Round in preparazione — seleziona le partite nel tab Calendario, poi avvia il round.</div></div>`;
+    return h;
+  }
 
   if(r.status==='open'){
     if(isProposer){
@@ -716,21 +756,25 @@ function viewTurno(){
 function viewCalendario(){
   const r=cur();
   const tRound=targetRound();
-  const localIds=targetMatchLocalIds();
+  const localIds=targetMatchLocalIds(); // usa draft/open
   const today=todayISO();
 
   // etichetta round summary
-  const summaryTitle = tRound
-    ? `Round corrente · ${fmtDay(tRound.date)}`
-    : r&&(r.status==='voting'||r.status==='closed')
-      ? `Prossimo round · seleziona partite`
-      : `Seleziona partite del round`;
+  // round con partite selezionate = primo in draft o open
+  const selRound=A.rounds.find(r=>r.status==='draft'||r.status==='open')||null;
+  const summaryTitle = selRound
+    ? selRound.status==='draft'
+      ? `Prossimo round · in preparazione`
+      : `Round corrente · ${fmtDay(selRound.date)}`
+    : A.rounds.length===0
+      ? `Round 1 · seleziona partite`
+      : `Prossimo round · seleziona partite`;
 
   const selMatches=[...localIds].map(i=>MATCHES[i]).sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time));
   let h=`<div class="round-summary">
     <div class="rs-title">${summaryTitle}</div>`;
   if(!selMatches.length){
-    h+=`<div class="rs-empty">${tRound?'Tocca una partita per aggiungerla al round':'Avvia prima il round nel tab Turno'}</div>`;
+    h+=`<div class="rs-empty">Tocca una partita per aggiungerla al round</div>`;
   } else {
     selMatches.forEach(m=>{
       h+=`<div class="rs-row">
@@ -760,7 +804,7 @@ function viewCalendario(){
       </div>`;
     matches.forEach(m=>{
       const inRound=localIds.has(m.id);
-      const canToggle=!!tRound;
+      const canToggle=true; // sempre selezionabile
       h+=`<div class="match-row ${inRound?'in-round':''}" ${canToggle?`onclick="A.toggleMatch(${m.id})"`:''} style="${canToggle?'':'opacity:.5;cursor:default'}">
         <div class="match-time">${m.time}</div>
         <div class="match-teams">
