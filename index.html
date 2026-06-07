@@ -517,6 +517,13 @@ A.saveProposal=async()=>{
   await loadRounds();render();
 };
 
+A.deleteProposal=async(propId)=>{
+  if(!confirm('Eliminare questa proposta?'))return;
+  await sb.from('proposal_matches').delete().eq('proposal_id',propId);
+  await sb.from('proposals').delete().eq('id',propId);
+  await loadRounds();render();
+};
+
 A.openVoting=async()=>{
   const r=cur();
   const {error}=await sb.from('rounds').update({status:'voting'}).eq('id',r.id);
@@ -526,13 +533,14 @@ A.openVoting=async()=>{
 
 A.vote=async(propId)=>{
   const r=cur();
-  // upsert: cancella voto esistente o inserisce nuovo
-  const existing=(r.votes||[]).find(v=>v.user_id===A.user.id);
-  if(existing&&existing.proposal_id===propId){
+  const myVotes=(r.votes||[]).filter(v=>v.user_id===A.user.id);
+  const existing=myVotes.find(v=>v.proposal_id===propId);
+  if(existing){
+    // toggle off
     await sb.from('votes').delete().eq('id',existing.id);
-  } else if(existing){
-    await sb.from('votes').update({proposal_id:propId}).eq('id',existing.id);
   } else {
+    // max 2 voti
+    if(myVotes.length>=2){showToast('Puoi votare al massimo 2 proposte');return;}
     await sb.from('votes').insert({round_id:r.id,user_id:A.user.id,proposal_id:propId});
   }
   await loadRounds();render();
@@ -577,6 +585,10 @@ const _matchIdCache={};
 A.toggleMatch=async(matchId)=>{
   const m=MATCHES[matchId];
 
+  // partite nel passato non selezionabili
+  const matchDateTime=new Date(m.date+'T'+(m.time||'23:59')+':00');
+  if(matchDateTime<new Date()){showToast('Partita già disputata');return;}
+
   // trova round draft/open esistente, o crea draft
   let r=A.rounds.find(r=>r.status==='draft'||r.status==='open')||null;
 
@@ -608,6 +620,10 @@ A.toggleMatch=async(matchId)=>{
 
   // ── optimistic update ──
   if(existing){
+    const hasProposals=(r.proposals||[]).some(p=>
+      (p.proposal_matches||[]).some(pm=>pm.match_id===dbMatchId)
+    );
+    if(hasProposals){showToast('Rimuovi prima le proposte che includono questa partita');return;}
     r.round_matches=r.round_matches.filter(rm=>rm.match_id!==dbMatchId);
     showToast(`${m.home} – ${m.away} rimossa`);
   } else {
@@ -721,7 +737,7 @@ function viewTurno(){
     : COUPLES[(A.rounds.length-1)%COUPLES.length];
   const proposals=r.proposals||[];
   const votes=r.votes||[];
-  const myVote=votes.find(v=>v.user_id===A.user.id);
+  const myVotes=(r.votes||[]).filter(v=>v.user_id===A.user.id);
   const isProposer=dbCouple&&(dbCouple.member_1===A.user.id||dbCouple.member_2===A.user.id);
   const counts={};proposals.forEach(p=>{counts[p.id]=votes.filter(v=>v.proposal_id===p.id).length;});
   const totalVotes=votes.length;
@@ -779,8 +795,11 @@ function viewTurno(){
             </div>`).join('');
           h+=`<div class="proposal">
             <div class="tag">${L(i)}</div>
-            <div class="txt" style="font-size:12px">${pmRows||'—'}</div>
-            ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:4px;border-top:1px solid var(--line)">Giocata: €${p.giocata}${p.vincita_pot?' · Vincita pot.: €'+p.vincita_pot:''}</div>`:''}
+            <div class="txt" style="font-size:12px;padding-right:28px">
+              ${pmRows||'—'}
+              ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:4px;border-top:1px solid var(--line)">Giocata: €${p.giocata}${p.vincita_pot?' · Vincita pot.: €'+p.vincita_pot:''}</div>`:''}
+            </div>
+            <button onclick="event.stopPropagation();A.deleteProposal('${p.id}')" style="position:absolute;right:10px;top:10px;background:rgba(255,90,60,.15);border:none;border-radius:8px;color:var(--coral);font-size:11px;font-weight:900;padding:4px 8px;cursor:pointer">✕</button>
           </div>`;
         });
         h+=`</div>`;
@@ -846,24 +865,48 @@ function viewTurno(){
   h+=`<div class="card ${selected&&selected.outcome==='won'?'gold':''}">
     <div class="eyebrow">${r.status==='closed'?'Risultato votazione':`Votazione · ${totalVotes} voti`}</div>`;
 
-  proposals.sort((a,b)=>a.created_at.localeCompare(b.created_at)).forEach((p,i)=>{
+  // ordina per voti decrescenti in voting/closed, per created_at in open
+  const sortedProposals = r.status==='voting'||r.status==='closed'
+    ? [...proposals].sort((a,b)=>(counts[b.id]||0)-(counts[a.id]||0)||((a.created_at||'').localeCompare(b.created_at||'')))
+    : [...proposals].sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
+
+  sortedProposals.forEach((p,i)=>{
     const cnt=counts[p.id]||0;
     const pct=maxC>0?Math.round(cnt/maxC*100):0;
     const win=r.status==='closed'&&p.is_selected;
-    const isMine=myVote?.proposal_id===p.id;
-    h+=`<div class="proposal ${win?'winner':''}">
-      <div class="tag" style="cursor:${r.status==='voting'&&!isProposer?'pointer':'default'}"
-        onclick="${r.status==='voting'&&!isProposer?`A.vote('${p.id}')`:''}">${L(i)}</div>
-      <div class="txt">${esc(p.text)}</div>
-      ${isMine?`<div style="position:absolute;left:42px;bottom:6px;font-size:9px;color:var(--pitch);font-weight:900">TUO VOTO</div>`:''}
+    const myVotesLocal=(r.votes||[]).filter(v=>v.user_id===A.user.id);
+    const isMine=myVotesLocal.some(v=>v.proposal_id===p.id);
+    const canVote=r.status==='voting'&&!isProposer;
+
+    const pms=(p.proposal_matches||[]).sort((a,b)=>{
+      const ma=a.matches,mb=b.matches;
+      if(!ma||!mb)return 0;
+      return (ma.date+ma.time).localeCompare(mb.date+mb.time);
+    });
+    const pmDetail=pms.map(pm=>`
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 0">
+        ${pm.matches?flagImg(pm.matches.team_home,16)+flagImg(pm.matches.team_away,16):''}
+        <span style="flex:1;font-size:11px;font-weight:700">${esc(pm.scommessa)}</span>
+        ${pm.quota?`<span style="font-size:11px;color:var(--pitch);font-weight:900">@${pm.quota}</span>`:''}
+      </div>`).join('');
+
+    h+=`<div class="proposal ${win?'winner':''}" ${canVote?`onclick="A.vote('${p.id}')" style="cursor:pointer"`:''}>
+      <div class="tag" style="${isMine?'background:var(--pitch);color:#06110b':win?'background:var(--gold);color:#2a1f00':''}">
+        ${L(sortedProposals.indexOf(p))}${isMine?'<div style="font-size:8px;margin-top:1px">✓</div>':''}
+      </div>
+      <div class="txt">
+        ${pmDetail||esc(p.text)}
+        ${p.giocata?`<div style="font-size:10px;color:var(--muted);margin-top:4px;padding-top:3px;border-top:1px solid var(--line)">Giocata €${p.giocata}${p.vincita_pot?' · Vincita pot. €'+p.vincita_pot:''}</div>`:''}
+      </div>
       ${totalVotes>0||r.status==='closed'?`<div class="votecount">${cnt}</div><div class="votefill" style="width:${pct}%"></div>`:''}
     </div>`;
   });
 
-  if(r.status==='voting'&&!isProposer){
-    h+=`<div class="note" style="margin:8px 0 12px">Tocca A/B/C per votare · ri-tocca per cambiare</div>`;
-    const allVoted=votes.length>=(PEOPLE.length-2);
-    h+=`<button class="btn btn-coral" ${!allVoted?'disabled':''} onclick="A.closeVoting()">Chiudi votazione</button>`;
+  if(r.status==='voting'){
+    if(!isProposer){
+      h+=`<div class="note" style="margin:8px 0 12px">Tocca le proposte per votare (max 2) · ri-tocca per annullare</div>`;
+    }
+    h+=`<button class="btn btn-coral" style="margin-top:10px" onclick="A.closeVoting()">Chiudi votazione</button>`;
   }
   if(r.status==='closed'){
     h+=`<button class="btn btn-ghost" style="margin-top:10px" onclick="A.reopenVoting()">↺ Riapri votazione</button>`;
