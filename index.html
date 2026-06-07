@@ -649,8 +649,6 @@ function viewTurno(){
   const proposals=r.proposals||[];
   const votes=r.votes||[];
   const myVote=votes.find(v=>v.user_id===A.user.id);
-  // trova la coppia dal DB per confrontare per UUID
-  const dbCouple=A.couples.find(c=>c.id===r.couple_id);
   const isProposer=dbCouple&&(dbCouple.member_1===A.user.id||dbCouple.member_2===A.user.id);
   const counts={};proposals.forEach(p=>{counts[p.id]=votes.filter(v=>v.proposal_id===p.id).length;});
   const totalVotes=votes.length;
