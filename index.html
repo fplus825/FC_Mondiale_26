@@ -96,7 +96,7 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
 /* ── Calendario ── */
 .phase-scroll{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:14px;scrollbar-width:none}
 .phase-scroll::-webkit-scrollbar{display:none}
-.cal-sticky{position:sticky;top:var(--sticky-offset,130px);z-index:20;background:var(--bg);padding-bottom:4px}
+.cal-sticky{position:sticky;top:var(--sticky-offset,130px);z-index:20;background:var(--bg);padding-bottom:4px;will-change:transform}
 .phase-pill{flex:none;cursor:pointer;font-size:11px;font-weight:800;padding:6px 12px;border-radius:999px;
   border:1px solid var(--line);color:var(--muted);background:var(--card);white-space:nowrap;transition:.15s;font-family:inherit}
 .phase-pill.active{background:var(--pitch);color:#06110b;border-color:var(--pitch)}
@@ -391,7 +391,7 @@ async function signOut(){
 async function loadRounds(){
   const [{data:rounds},{data:couples}]=await Promise.all([
     sb.from('rounds')
-      .select(`*, proposals(*, proposal_matches(*, matches(id,date,time,team_home,team_away))), votes(*), round_matches(id, match_id, matches(id,date,team_home,team_away))`)
+      .select(`*, proposals(*, proposal_matches(*, matches(id,date,time,team_home,team_away))), votes(*), round_matches(id, match_id, matches(id,date,time,team_home,team_away))`)
       .order('created_at',{ascending:true}),
     sb.from('couples').select('id,name,order_index,member_1,member_2').order('order_index'),
   ]);
@@ -566,18 +566,17 @@ A.setOutcome=async(propId,outcome)=>{
 
 A.nextRound=async()=>{await A.startRound();A.setView('turno');};
 
+// cache dbMatchId per evitare query ripetute
+const _matchIdCache={};
+
 A.toggleMatch=async(matchId)=>{
   const m=MATCHES[matchId];
-  // cerca match nel DB
-  const {data:matchRows}=await sb.from('matches').select('id')
-    .eq('date',m.date).eq('team_home',m.home).eq('team_away',m.away).limit(1);
-  if(!matchRows||!matchRows.length){showToast('Partita non trovata nel DB');return;}
-  const dbMatchId=matchRows[0].id;
 
   // trova round draft/open esistente, o crea draft
   let r=A.rounds.find(r=>r.status==='draft'||r.status==='open')||null;
+
+  // se non esiste round, crea draft prima dell'optimistic update
   if(!r){
-    // crea nuovo round in draft
     const nextIdx=A.rounds.length%COUPLES.length;
     const coupleId=A.couples[nextIdx]?.id;
     if(!coupleId){showToast('Coppie non trovate nel DB');return;}
@@ -590,15 +589,40 @@ A.toggleMatch=async(matchId)=>{
     if(!r){showToast('Errore nel trovare il round creato');return;}
   }
 
+  // ottieni dbMatchId (con cache)
+  let dbMatchId=_matchIdCache[matchId];
+  if(!dbMatchId){
+    const {data:matchRows}=await sb.from('matches').select('id')
+      .eq('date',m.date).eq('team_home',m.home).eq('team_away',m.away).limit(1);
+    if(!matchRows||!matchRows.length){showToast('Partita non trovata nel DB');return;}
+    dbMatchId=matchRows[0].id;
+    _matchIdCache[matchId]=dbMatchId;
+  }
+
   const existing=(r.round_matches||[]).find(rm=>rm.match_id===dbMatchId);
+
+  // ── optimistic update ──
   if(existing){
-    await sb.from('round_matches').delete().eq('round_id',r.id).eq('match_id',dbMatchId);
+    r.round_matches=r.round_matches.filter(rm=>rm.match_id!==dbMatchId);
     showToast(`${m.home} – ${m.away} rimossa`);
   } else {
-    await sb.from('round_matches').insert({round_id:r.id,match_id:dbMatchId});
+    r.round_matches=[...(r.round_matches||[]),{
+      id:'_opt_'+matchId, match_id:dbMatchId,
+      matches:{id:dbMatchId,date:m.date,time:m.time,team_home:m.home,team_away:m.away}
+    }];
     showToast(`${m.home} – ${m.away} aggiunta ✓`);
   }
-  await loadRounds();render();
+  render(); // UI immediata
+
+  // ── sync DB in background ──
+  if(existing){
+    const {error}=await sb.from('round_matches').delete().eq('round_id',r.id).eq('match_id',dbMatchId);
+    if(error){showToast('Errore sync: '+error.message);await loadRounds();render();}
+  } else {
+    const {error}=await sb.from('round_matches').insert({round_id:r.id,match_id:dbMatchId});
+    if(error){showToast('Errore sync: '+error.message);await loadRounds();render();}
+    else{await loadRounds();render();} // refresh per avere id reale
+  }
 };
 
 function cur(){return A.rounds[A.rounds.length-1]||null;}
@@ -994,10 +1018,13 @@ function viewClassifica(){
 
 // ── VIEW: COPPIE ──────────────────────────────────────────────
 function viewCoppie(){
-  const cIdx=A.rounds.length%COUPLES.length;
+  const r=cur();
+  const activeCoupleId=r?.couple_id||null;
+  const activeDbCouple=activeCoupleId?A.couples.find(c=>c.id===activeCoupleId):null;
+  const activeName=activeDbCouple?.name||null;
   return`<div class="card"><div class="eyebrow">Le 4 coppie · ordine di rotazione</div>
-    ${COUPLES.map((c,i)=>`<div class="couple-card ${i===cIdx?'active':''}">
-      <div class="ttl">${i+1}. ${esc(c.name)} ${i===cIdx?'· tocca a loro':''}</div>
+    ${COUPLES.map((c,i)=>`<div class="couple-card ${c.name===activeName?'active':''}">
+      <div class="ttl">${i+1}. ${esc(c.name)} ${c.name===activeName?'· tocca a loro':''}</div>
       <div class="sub">${esc(c.members.join(' & '))}</div></div>`).join('')}
     <div class="note" style="margin-top:4px">Rotazione automatica: dopo la coppia 4 si riparte dalla 1.</div>
   </div>
