@@ -52,15 +52,15 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
 .btn-ghost:active{border-color:var(--pitch);color:var(--pitch)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .row{display:flex;gap:9px}.row>*{flex:1}
-.proposal{position:relative;border:1.5px solid var(--line);background:#08160f;border-radius:14px;padding:14px 14px 14px 50px;margin-bottom:10px;overflow:hidden}
+.proposal{position:relative;border:1.5px solid var(--line);background:#08160f;border-radius:14px;padding:14px 14px 22px 50px;margin-bottom:10px;overflow:hidden}
 .proposal .tag{position:absolute;left:0;top:0;bottom:0;width:38px;display:grid;place-items:center;font-family:'Anton',sans-serif;font-size:18px;color:var(--muted);background:#0b1b13;border-right:1px solid var(--line)}
 .proposal .txt{font-weight:700;font-size:14.5px;line-height:1.35}
 .proposal.winner{border-color:var(--gold);background:linear-gradient(180deg,rgba(255,206,69,.14),#08160f)}
 .proposal.winner .tag{background:var(--gold);color:#2a1f00}
-.votefill{position:absolute;left:0;bottom:0;height:20px;background:rgba(182,255,60,.18);transition:width .5s cubic-bezier(.2,.8,.2,1);display:flex;align-items:center;justify-content:flex-end;padding-right:8px;border-radius:0 4px 0 0}
-.proposal.winner .votefill{background:rgba(255,206,69,.18)}
-.votecount{position:absolute;bottom:2px;right:10px;font-weight:900;font-size:11px;color:var(--pitch);z-index:1;line-height:16px}
-.proposal.winner .votecount{color:var(--gold)}
+.votefill{position:absolute;left:0;bottom:0;height:18px;background:var(--pitch);transition:width .5s cubic-bezier(.2,.8,.2,1);border-radius:0 4px 0 0}
+.proposal.winner .votefill{background:var(--gold)}
+.votecount{position:absolute;bottom:1px;right:10px;font-weight:900;font-size:10px;color:#06110b;z-index:1;line-height:16px}
+.proposal.winner .votecount{color:#2a1f00}
 .voter{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}
 .voter:last-child{border-bottom:none}
 .voter .nm{flex:1;font-weight:700;font-size:14px}
@@ -93,6 +93,9 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
 .note{font-size:12px;color:var(--muted);line-height:1.5}
 .fields-row{display:flex;gap:9px;align-items:flex-end}
 @media(max-width:420px){.fields-row{flex-direction:column;align-items:stretch}}
+.outcome-row{display:flex;gap:9px}
+@media(max-width:380px){.outcome-row{flex-direction:column}}
+.outcome-row>*{flex:1}
 .center{text-align:center}
 .pop{animation:pop .35s ease both}
 /* ── Calendario ── */
@@ -157,6 +160,9 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 @keyframes pop{0%{transform:scale(.85);opacity:0}100%{transform:scale(1);opacity:1}}
+.tooltip-trigger{cursor:pointer;position:relative}
+#voter-tooltip{position:fixed;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:12px;font-weight:700;color:var(--ink);z-index:200;pointer-events:none;opacity:0;transition:opacity .15s;max-width:200px;white-space:normal;line-height:1.5}
+#voter-tooltip.show{opacity:1}
 </style>
 </head>
 <body>
@@ -424,8 +430,9 @@ function canSelectMatches(){
 
 // Ritorna indici locali MATCHES selezionati per visualizzazione
 function targetMatchLocalIds(){
-  // cerca il round in draft o open
-  const r=A.rounds.find(r=>r.status==='draft'||r.status==='open')||null;
+  // cerca il round in draft o open (l'ultimo se ce ne sono più)
+  const candidates=A.rounds.filter(r=>r.status==='draft'||r.status==='open');
+  const r=candidates[candidates.length-1]||null;
   if(!r) return new Set();
   const ids=new Set();
   (r.round_matches||[]).forEach(rm=>{
@@ -536,27 +543,29 @@ A.vote=async(propId)=>{
   const r=cur();
   const myVotes=(r.votes||[]).filter(v=>v.user_id===A.user.id);
   const existing=myVotes.find(v=>v.proposal_id===propId);
+
+  // ── optimistic update ──
   if(existing){
-    // toggle off
-    await sb.from('votes').delete().eq('id',existing.id);
+    r.votes=r.votes.filter(v=>v.id!==existing.id);
   } else {
-    // max 2 voti
     if(myVotes.length>=2){showToast('Puoi votare al massimo 2 proposte');return;}
-    await sb.from('votes').insert({round_id:r.id,user_id:A.user.id,proposal_id:propId});
+    r.votes=[...(r.votes||[]),{id:'_opt_vote_'+propId,round_id:r.id,user_id:A.user.id,proposal_id:propId}];
+  }
+  render(); // UI immediata
+
+  // ── sync DB ──
+  if(existing){
+    const {error}=await sb.from('votes').delete().eq('id',existing.id);
+    if(error){showToast('Errore sync: '+error.message);}
+  } else {
+    const {error}=await sb.from('votes').insert({round_id:r.id,user_id:A.user.id,proposal_id:propId});
+    if(error){showToast('Errore sync: '+error.message);}
   }
   await loadRounds();render();
 };
 
 A.closeVoting=async()=>{
   const r=cur();
-  const counts={};
-  (r.proposals||[]).forEach(p=>{counts[p.id]=0;});
-  (r.votes||[]).forEach(v=>{if(counts[v.proposal_id]!==undefined)counts[v.proposal_id]++;});
-  const max=Math.max(...Object.values(counts));
-  const top=Object.entries(counts).filter(([,c])=>c===max).map(([id])=>id);
-  if(top.length===1){
-    await sb.from('proposals').update({is_selected:true}).eq('id',top[0]);
-  }
   await sb.from('rounds').update({status:'closed'}).eq('id',r.id);
   await loadRounds();render();
 };
@@ -565,6 +574,19 @@ A.reopenVoting=async()=>{
   const r=cur();
   await sb.from('proposals').update({is_selected:false}).eq('round_id',r.id);
   await sb.from('rounds').update({status:'voting'}).eq('id',r.id);
+  await loadRounds();render();
+};
+
+A.toggleSelected=async(propId)=>{
+  const r=cur();
+  const prop=(r.proposals||[]).find(p=>p.id===propId);
+  if(!prop)return;
+  await sb.from('proposals').update({is_selected:!prop.is_selected}).eq('id',propId);
+  await loadRounds();render();
+};
+
+A.setOutcomeReg=async(propId,outcome)=>{
+  await sb.from('proposals').update({outcome}).eq('id',propId);
   await loadRounds();render();
 };
 
@@ -590,12 +612,14 @@ A.toggleMatch=async(matchId)=>{
   const matchDateTime=new Date(m.date+'T'+(m.time||'23:59')+':00');
   if(matchDateTime<new Date()){showToast('Partita già disputata');return;}
 
-  // trova round draft/open esistente, o crea draft
+  // trova round draft/open esistente
   let r=A.rounds.find(r=>r.status==='draft'||r.status==='open')||null;
 
-  // se non esiste round, crea draft prima dell'optimistic update
+  // se non esiste (es. round corrente in voting/closed), crea draft per round successivo
   if(!r){
-    const nextIdx=A.rounds.length%COUPLES.length;
+    // indice prossima coppia = numero round non-draft completati % 4
+    const completedRounds=A.rounds.filter(r=>r.status!=='draft');
+    const nextIdx=completedRounds.length%COUPLES.length;
     const coupleId=A.couples[nextIdx]?.id;
     if(!coupleId){showToast('Coppie non trovate nel DB');return;}
     const {data:newRound,error}=await sb.from('rounds')
@@ -657,7 +681,7 @@ function render(){
   }
   if(!A.user){renderAuth();return;}
 
-  const tabs=[['turno','Turno'],['calendario','Calendario'],['storico','Storico'],['classifica','Classifica'],['coppie','Coppie']];
+  const tabs=[['turno','Turno'],['calendario','Calendario'],['storico','Registro'],['classifica','Classifica'],['coppie','Coppie']];
   let html=`
   <div class="sticky-top">
     <div class="header">
@@ -899,7 +923,14 @@ function viewTurno(){
         ${pmDetail||esc(p.text)}
         ${p.giocata?`<div style="font-size:10px;color:var(--muted);margin-top:4px;padding-top:3px;border-top:1px solid var(--line)">Giocata €${p.giocata}${p.vincita_pot?' · Vincita pot. €'+p.vincita_pot:''}</div>`:''}
       </div>
-      ${totalVotes>0||r.status==='closed'?`<div class="votefill" style="width:${pct}%"></div><div class="votecount">${cnt} vot${cnt===1?'o':'i'}</div>`:''}
+      ${totalVotes>0||r.status==='closed'?`
+        <div class="votefill" style="width:${pct}%"></div>
+        <div class="votecount tooltip-trigger" data-voters="${
+          (r.votes||[]).filter(v=>v.proposal_id===p.id).map(v=>{
+            const prof=A.profile?.id===v.user_id?A.profile:null;
+            return prof?.name||v.user_id.slice(0,6);
+          }).join(', ')||''
+        }">${cnt} vot${cnt===1?'o':'i'}</div>`:''}
     </div>`;
   });
 
@@ -914,31 +945,28 @@ function viewTurno(){
   }
   h+=`</div>`;
 
-  // pareggio
-  if(r.status==='closed'&&!selected){
-    const counts2={};proposals.forEach(p=>{counts2[p.id]=votes.filter(v=>v.proposal_id===p.id).length;});
-    const max2=Math.max(0,...Object.values(counts2));
-    const tied=proposals.filter(p=>(counts2[p.id]||0)===max2);
-    h+=`<div class="card"><div class="eyebrow" style="color:var(--coral)">Pareggio!</div>
-      <div class="sub" style="margin-bottom:10px">${esc(couple.name)} sceglie quale piazzare:</div>
-      ${tied.map((p,i)=>`<button class="btn btn-ghost" style="margin-bottom:8px" onclick="A.pickTie('${p.id}')">${L(proposals.indexOf(p))} — ${esc(p.text)}</button>`).join('')}
-    </div>`;
-  }
 
-  // scommessa scelta + esito
-  if(r.status==='closed'&&selected){
-    h+=`<div class="card ${selected.outcome==='won'?'gold':''} pop">
-      <div class="eyebrow" style="color:var(--gold)">🏆 Scommessa scelta</div>
-      <div class="h2" style="margin-bottom:10px">${esc(selected.text)}</div>
-      <div class="eyebrow">Esito reale</div>
-      <div class="row">
-        <button class="btn ${selected.outcome==='won'?'btn-primary':'btn-ghost'}" onclick="A.setOutcome('${selected.id}','won')">Vinta ✓</button>
-        <button class="btn ${selected.outcome==='lost'?'btn-coral':'btn-ghost'}" onclick="A.setOutcome('${selected.id}','lost')">Persa ✕</button>
-      </div>
-    </div>
-    <div class="card">
+
+  // fase closed — selezione proposte da piazzare
+  if(r.status==='closed'){
+    if(isProposer){
+      const selectedCount=(proposals||[]).filter(p=>p.is_selected).length;
+      h+=`<div class="card">
+        <div class="eyebrow" style="color:var(--gold)">Seleziona le proposte da piazzare</div>
+        <div class="sub" style="margin-bottom:12px">Tocca una proposta per selezionarla/deselezionarla. Gli esiti si registrano nel Registro.</div>
+        ${(proposals||[]).sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||'')).map((p,i)=>`
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="A.toggleSelected('${p.id}')">
+            <div style="width:28px;height:28px;border-radius:8px;border:1.5px solid ${p.is_selected?'var(--pitch)':'var(--line)'};background:${p.is_selected?'var(--pitch)':'transparent'};display:grid;place-items:center;flex:none;transition:.15s">
+              ${p.is_selected?'<span style="color:#06110b;font-weight:900;font-size:14px">✓</span>':''}
+            </div>
+            <div style="flex:1;font-weight:700;font-size:13px">${L(i)} — ${esc(p.text||((p.proposal_matches||[]).map(pm=>pm.scommessa).join(' + ')))}</div>
+          </div>`).join('')}
+      </div>`;
+    }
+    const nextCoupleName=COUPLES[A.rounds.length%COUPLES.length]?.name||'';
+    h+=`<div class="card">
       <div class="eyebrow">Avanti</div>
-      <div class="h2" style="margin-bottom:4px">Prossimo turno → ${esc(COUPLES[A.rounds.length%COUPLES.length].name)}</div>
+      <div class="h2" style="margin-bottom:4px">Prossimo turno → ${esc(nextCoupleName)}</div>
       <button class="btn btn-primary" onclick="A.nextRound()">Avvia il turno successivo</button>
     </div>`;
   }
@@ -1016,27 +1044,84 @@ function viewCalendario(){
 }
 
 // ── VIEW: STORICO ─────────────────────────────────────────────
+// stato espansione registro
+const _regOpen={};
+
 function viewStorico(){
   if(!A.rounds.length)return`<div class="card"><div class="sub center">Ancora nessun turno.</div></div>`;
-  let h=`<div class="card"><div class="eyebrow">Storico turni</div><div class="hist">`;
+  let h='';
   [...A.rounds].reverse().forEach((r,k)=>{
-    const cIdx=(A.rounds.length-1-k)%COUPLES.length;
-    const couple=COUPLES[cIdx];
-    const sel=(r.proposals||[]).find(p=>p.is_selected);
-    const outcome=sel?.outcome||'pending';
-    const cls=outcome==='won'?'won':outcome==='lost'?'lost':'';
-    const badge=outcome==='won'?'won':outcome==='lost'?'lost':'pend';
-    const label=outcome==='won'?'Vinta':outcome==='lost'?'Persa':r.status==='closed'?'In attesa esito':'Aperto';
-    h+=`<div class="item ${cls}">
-      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
-        <div style="font-weight:800;font-size:13px">#${A.rounds.length-k} · ${esc(couple.name)} <span style="color:var(--muted);font-weight:600">· ${fmtDate(r.date)}</span></div>
-        <span class="badge ${badge}">${label}</span>
+    const rIdx=A.rounds.length-1-k;
+    const dbCouple=A.couples.find(c=>c.id===r.couple_id);
+    const coupleName=dbCouple?.name||COUPLES[rIdx%COUPLES.length]?.name||'';
+    const proposals=r.proposals||[];
+    const votes=r.votes||[];
+    const selectedProps=proposals.filter(p=>p.is_selected);
+    const allOutcomes=proposals.map(p=>p.outcome);
+    const hasWon=allOutcomes.some(o=>o==='won');
+    const hasLost=allOutcomes.some(o=>o==='lost');
+    const statusLabel=r.status==='closed'?'Chiuso':r.status==='voting'?'In votazione':r.status==='open'?'Aperto':'Bozza';
+    const isOpen=!!_regOpen[r.id];
+    const counts={};proposals.forEach(p=>{counts[p.id]=votes.filter(v=>v.proposal_id===p.id).length;});
+    const maxC=Math.max(0,...Object.values(counts));
+
+    h+=`<div class="card" style="margin-bottom:10px;cursor:pointer" onclick="A.toggleReg('${r.id}')">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-family:'Anton';font-size:22px;color:var(--pitch);width:32px;flex:none">${A.rounds.length-k}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:900;font-size:14px;color:var(--pitch);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(coupleName)}</div>
+          <div style="font-size:11px;color:var(--muted)">${fmtDate(r.date)} · ${statusLabel}${selectedProps.length?' · '+selectedProps.length+' scelt'+(selectedProps.length===1?'a':'e'):''}</div>
+        </div>
+        <div style="font-size:18px;color:var(--muted);transition:transform .2s;transform:rotate(${isOpen?180:0}deg)">▾</div>
       </div>
-      ${sel?`<div class="sub" style="margin-top:5px">🎯 ${esc(sel.text)}</div>`:''}
+
+      ${isOpen?`<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px" onclick="event.stopPropagation()">
+        ${proposals.length===0?`<div class="sub">Nessuna proposta.</div>`:''}
+        ${[...proposals].sort((a,b)=>(counts[b.id]||0)-(counts[a.id]||0)).map((p,i)=>{
+          const cnt=counts[p.id]||0;
+          const pct=maxC>0?Math.round(cnt/maxC*100):0;
+          const pms=(p.proposal_matches||[]).sort((a,b)=>{
+            const ma=a.matches,mb=b.matches;
+            if(!ma||!mb)return 0;
+            return (ma.date+ma.time).localeCompare(mb.date+mb.time);
+          });
+          const pmDetail=pms.map(pm=>`
+            <div style="display:flex;align-items:center;gap:6px;padding:3px 0">
+              ${pm.matches?flagImg(pm.matches.team_home,16)+flagImg(pm.matches.team_away,16):''}
+              <span style="flex:1;font-size:11px;font-weight:700">${esc(pm.scommessa)}</span>
+              ${pm.quota?`<span style="font-size:11px;color:var(--pitch);font-weight:900">@${pm.quota}</span>`:''}
+            </div>`).join('');
+          const outcomeBtn=(outcome,label,cls)=>
+            `<button onclick="event.stopPropagation();A.setOutcomeReg('${p.id}','${outcome}')"
+              style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid var(--line);font-size:11px;font-weight:900;font-family:inherit;cursor:pointer;
+              background:${p.outcome===outcome?(outcome==='won'?'var(--pitch)':'var(--coral)'):'transparent'};
+              color:${p.outcome===outcome?(outcome==='won'?'#06110b':'#fff'):'var(--muted)'}">${label}</button>`;
+          return `<div class="proposal ${p.is_selected?'winner':''}" style="margin-bottom:8px">
+            <div class="tag" style="${p.is_selected?'background:var(--gold);color:#2a1f00':''}">
+              ${L(i)}${p.is_selected?'<div style="font-size:8px;margin-top:1px">★</div>':''}
+            </div>
+            <div class="txt">
+              ${pmDetail||esc(p.text)}
+              ${p.giocata?`<div style="font-size:10px;color:var(--muted);margin-top:4px;padding-top:3px;border-top:1px solid var(--line)">Giocata €${p.giocata}${p.vincita_pot?' · Vincita pot. €'+p.vincita_pot:''}</div>`:''}
+              <div style="display:flex;gap:6px;margin-top:8px">
+                ${outcomeBtn('won','Vinta ✓','won')}
+                ${outcomeBtn('lost','Persa ✕','lost')}
+                ${outcomeBtn('pending','In attesa','pend')}
+              </div>
+            </div>
+            ${votes.length>0?`<div class="votefill" style="width:${pct}%"></div><div class="votecount">${cnt} vot${cnt===1?'o':'i'}</div>`:''}
+          </div>`;
+        }).join('')}
+      </div>`:''}
     </div>`;
   });
-  h+=`</div></div>`;return h;
+  return h;
 }
+
+A.toggleReg=(roundId)=>{
+  _regOpen[roundId]=!_regOpen[roundId];
+  render();
+};
 
 // ── VIEW: CLASSIFICA ──────────────────────────────────────────
 function viewClassifica(){
@@ -1105,6 +1190,40 @@ async function resetAll(){
   await sb.from('rounds').delete().neq('id','00000000-0000-0000-0000-000000000000');
   await loadRounds();render();
 }
+
+// ── TOOLTIP VOTANTI ───────────────────────────────────────────
+(function(){
+  const tip=document.createElement('div');
+  tip.id='voter-tooltip';
+  document.body.appendChild(tip);
+  let hideTimer;
+
+  function showTip(el,evt){
+    const voters=el.dataset.voters;
+    if(!voters){return;}
+    tip.textContent='Voti: '+voters;
+    tip.classList.add('show');
+    const rect=el.getBoundingClientRect();
+    tip.style.left=Math.min(rect.left,window.innerWidth-210)+'px';
+    tip.style.top=(rect.top-40)+'px';
+    clearTimeout(hideTimer);
+  }
+  function hideTip(){
+    hideTimer=setTimeout(()=>tip.classList.remove('show'),300);
+  }
+
+  document.addEventListener('mouseover',e=>{
+    const t=e.target.closest('.tooltip-trigger');
+    if(t)showTip(t,e);
+  });
+  document.addEventListener('mouseout',e=>{
+    if(e.target.closest('.tooltip-trigger'))hideTip();
+  });
+  document.addEventListener('click',e=>{
+    const t=e.target.closest('.tooltip-trigger');
+    if(t){showTip(t,e);setTimeout(hideTip,2000);}
+  });
+})();
 
 // ── AVVIO ─────────────────────────────────────────────────────
 initAuth();
