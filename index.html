@@ -832,7 +832,7 @@ function viewTurno(){
               ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:4px;border-top:1px solid var(--line)">Giocata: €${p.giocata}${p.vincita_pot?' · Vincita pot.: €'+p.vincita_pot:''}</div>`:''}
             </div>
             <button onclick="event.stopPropagation();A.deleteProposal('${p.id}')" style="position:absolute;right:10px;top:10px;background:rgba(255,90,60,.15);border:none;border-radius:8px;color:var(--coral);font-size:11px;font-weight:900;padding:4px 8px;cursor:pointer">✕</button>
-            ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:24px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(p.profiles.name)}</div>`:''}
+            ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:24px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(profileName(p.author_id))}</div>`:''}
           </div>`;
         });
         h+=`</div>`;
@@ -911,7 +911,7 @@ function viewTurno(){
               ${pmRows||'—'}
               ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:4px;border-top:1px solid var(--line)">Giocata €${p.giocata}${p.vincita_pot?' · Vincita pot. €'+p.vincita_pot:''}</div>`:''}
             </div>
-            ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:24px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(p.profiles.name)}</div>`:''}
+            ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:24px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(profileName(p.author_id))}</div>`:''}
           </div>`;
         });
         h+=`</div>`;
@@ -1146,7 +1146,7 @@ function viewStorico(){
                 ${outcomeBtn('pending','In attesa','pend')}
               </div>
             </div>
-            ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:22px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(p.profiles.name)}</div>`:''}
+            ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:22px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(profileName(p.author_id))}</div>`:''}
             ${votes.length>0?`
               <div class="votefill" style="width:${pct}%"></div>
               <div class="votecount ${pct>=25?'votecount-in':'votecount-out'} tooltip-trigger" data-voters="${
