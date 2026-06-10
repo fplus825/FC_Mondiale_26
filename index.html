@@ -328,6 +328,7 @@ const fmtDate=(iso)=>{try{const d=new Date(iso+"T00:00:00");return String(d.getD
 const fmtDay=(iso)=>{try{return new Date(iso+"T12:00:00").toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long"});}catch(e){return iso;}};
 const esc=(s)=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const L=(i)=>String.fromCharCode(65+i);
+const profileName=(uid)=>(A.profiles||[]).find(p=>p.id===uid)?.name||uid?.slice(0,6)||'';
 
 let toastTimer;
 const showToast=(msg)=>{const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2400);};
@@ -339,6 +340,7 @@ const A={
   profile:null,    // {id,name,is_admin}
   rounds:[],       // da supabase
   couples:[],     // da supabase
+  profiles:[],    // da supabase
   calPhase:'Tutti',
   loading:true,
 };
@@ -403,14 +405,16 @@ async function signOut(){
 
 // ── Supabase data ─────────────────────────────────────────────
 async function loadRounds(){
-  const [{data:rounds},{data:couples}]=await Promise.all([
+  const [{data:rounds},{data:couples},{data:allProfiles}]=await Promise.all([
     sb.from('rounds')
-      .select(`*, proposals(*, profiles!proposals_author_id_fkey(name), proposal_matches(*, matches(id,date,time,team_home,team_away))), votes(*, profiles!votes_user_id_fkey(name)), round_matches(id, match_id, matches(id,date,time,team_home,team_away,odds_url))`)
+      .select(`*, proposals(*, proposal_matches(*, matches(id,date,time,team_home,team_away))), votes(*), round_matches(id, match_id, matches(id,date,time,team_home,team_away,odds_url))`)
       .order('created_at',{ascending:true}),
     sb.from('couples').select('id,name,order_index,member_1,member_2').order('order_index'),
+    sb.from('profiles').select('id,name'),
   ]);
   A.rounds=rounds||[];
   A.couples=couples||[];
+  A.profiles=allProfiles||[];
 }
 
 // Logica round target per selezione partite:
@@ -828,7 +832,7 @@ function viewTurno(){
               ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:4px;border-top:1px solid var(--line)">Giocata: €${p.giocata}${p.vincita_pot?' · Vincita pot.: €'+p.vincita_pot:''}</div>`:''}
             </div>
             <button onclick="event.stopPropagation();A.deleteProposal('${p.id}')" style="position:absolute;right:10px;top:10px;background:rgba(255,90,60,.15);border:none;border-radius:8px;color:var(--coral);font-size:11px;font-weight:900;padding:4px 8px;cursor:pointer">✕</button>
-            ${p.profiles?.name?`<div style="position:absolute;right:10px;bottom:24px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(p.profiles.name)}</div>`:''}
+            ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:24px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(p.profiles.name)}</div>`:''}
           </div>`;
         });
         h+=`</div>`;
@@ -907,7 +911,7 @@ function viewTurno(){
               ${pmRows||'—'}
               ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:4px;border-top:1px solid var(--line)">Giocata €${p.giocata}${p.vincita_pot?' · Vincita pot. €'+p.vincita_pot:''}</div>`:''}
             </div>
-            ${p.profiles?.name?`<div style="position:absolute;right:10px;bottom:24px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(p.profiles.name)}</div>`:''}
+            ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:24px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(p.profiles.name)}</div>`:''}
           </div>`;
         });
         h+=`</div>`;
@@ -958,10 +962,7 @@ function viewTurno(){
       ${totalVotes>0||r.status==='closed'?`
         <div class="votefill" style="width:${pct}%"></div>
         <div class="votecount ${pct>=25?'votecount-in':'votecount-out'} tooltip-trigger" data-voters="${
-          (r.votes||[]).filter(v=>v.proposal_id===p.id).map(v=>{
-            const vProf=v.profiles;
-            return vProf?.name||v.user_id.slice(0,6);
-          }).join(', ')||''
+          (r.votes||[]).filter(v=>v.proposal_id===p.id).map(v=>profileName(v.user_id)).join(', ')||''
         }">${cnt} vot${cnt===1?'o':'i'}</div>`:''}
     </div>`;
   });
@@ -1145,11 +1146,11 @@ function viewStorico(){
                 ${outcomeBtn('pending','In attesa','pend')}
               </div>
             </div>
-            ${p.profiles?.name?`<div style="position:absolute;right:10px;bottom:22px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(p.profiles.name)}</div>`:''}
+            ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:22px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(p.profiles.name)}</div>`:''}
             ${votes.length>0?`
               <div class="votefill" style="width:${pct}%"></div>
               <div class="votecount ${pct>=25?'votecount-in':'votecount-out'} tooltip-trigger" data-voters="${
-                votes.filter(v=>v.proposal_id===p.id).map(v=>v.profiles?.name||v.user_id.slice(0,6)).join(', ')||''
+                votes.filter(v=>v.proposal_id===p.id).map(v=>profileName(v.user_id)).join(', ')||''
               }">${cnt} vot${cnt===1?'o':'i'}</div>`:''}
           </div>`;
         }).join('')}
