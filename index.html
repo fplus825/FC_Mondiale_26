@@ -59,8 +59,11 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
 .proposal.winner .tag{background:var(--gold);color:#2a1f00}
 .votefill{position:absolute;left:0;bottom:0;height:18px;background:var(--pitch);transition:width .5s cubic-bezier(.2,.8,.2,1);border-radius:0 4px 0 0}
 .proposal.winner .votefill{background:var(--gold)}
-.votecount{position:absolute;bottom:1px;right:10px;font-weight:900;font-size:10px;color:#06110b;z-index:1;line-height:16px}
-.proposal.winner .votecount{color:#2a1f00}
+.votecount{position:absolute;bottom:1px;font-weight:900;font-size:10px;z-index:1;line-height:16px}
+.votecount-in{right:8px;color:#06110b}
+.votecount-out{right:6px;color:var(--pitch);bottom:20px}
+.proposal.winner .votecount-in{color:#2a1f00}
+.proposal.winner .votecount-out{color:var(--gold)}
 .voter{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}
 .voter:last-child{border-bottom:none}
 .voter .nm{flex:1;font-weight:700;font-size:14px}
@@ -402,7 +405,7 @@ async function signOut(){
 async function loadRounds(){
   const [{data:rounds},{data:couples}]=await Promise.all([
     sb.from('rounds')
-      .select(`*, proposals(*, proposal_matches(*, matches(id,date,time,team_home,team_away))), votes(*), round_matches(id, match_id, matches(id,date,time,team_home,team_away))`)
+      .select(`*, proposals(*, profiles!proposals_author_id_fkey(name), proposal_matches(*, matches(id,date,time,team_home,team_away))), votes(*, profiles!votes_user_id_fkey(name)), round_matches(id, match_id, matches(id,date,time,team_home,team_away,odds_url))`)
       .order('created_at',{ascending:true}),
     sb.from('couples').select('id,name,order_index,member_1,member_2').order('order_index'),
   ]);
@@ -825,6 +828,7 @@ function viewTurno(){
               ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:4px;border-top:1px solid var(--line)">Giocata: €${p.giocata}${p.vincita_pot?' · Vincita pot.: €'+p.vincita_pot:''}</div>`:''}
             </div>
             <button onclick="event.stopPropagation();A.deleteProposal('${p.id}')" style="position:absolute;right:10px;top:10px;background:rgba(255,90,60,.15);border:none;border-radius:8px;color:var(--coral);font-size:11px;font-weight:900;padding:4px 8px;cursor:pointer">✕</button>
+            ${p.profiles?.name?`<div style="position:absolute;right:10px;bottom:24px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(p.profiles.name)}</div>`:''}
           </div>`;
         });
         h+=`</div>`;
@@ -848,6 +852,7 @@ function viewTurno(){
                   ${flagImg(m.team_home)} <span style="font-weight:800;font-size:13px">${esc(m.team_home)}</span>
                   <span style="color:var(--muted);font-size:11px;font-weight:700">vs</span>
                   ${flagImg(m.team_away)} <span style="font-weight:800;font-size:13px">${esc(m.team_away)}</span>
+                  ${m.odds_url?`<a href="${esc(m.odds_url)}" target="_blank" rel="noopener" style="color:var(--pitch);line-height:1;text-decoration:none;margin-left:4px" onclick="event.stopPropagation()">${EXT_ICON}</a>`:''}
                 </div>
               </div>
               <input id="scommessa-${m.id}" class="input" placeholder="Scommessa (es. 1X, Over 2.5…)" style="margin-bottom:8px">
@@ -881,7 +886,34 @@ function viewTurno(){
         </div>`;
       }
     } else {
-      h+=`<div class="card"><div class="sub center">In attesa delle proposte di ${esc(couple.name)}…</div></div>`;
+      // non-proponenti: vedono proposte in sola lettura
+      if(savedProposals.length){
+        h+=`<div class="card"><div class="eyebrow">Proposte di ${esc(couple.name)}</div>`;
+        savedProposals.forEach((p,i)=>{
+          const pms=(p.proposal_matches||[]).sort((a,b)=>{
+            const ma=a.matches,mb=b.matches;
+            if(!ma||!mb)return 0;
+            return (ma.date+ma.time).localeCompare(mb.date+mb.time);
+          });
+          const pmRows=pms.map(pm=>`
+            <div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--line)">
+              ${pm.matches?flagImg(pm.matches.team_home,18)+flagImg(pm.matches.team_away,18):''}
+              <span style="flex:1;font-size:12px;font-weight:700">${esc(pm.scommessa)}</span>
+              ${pm.quota?`<span style="font-size:12px;color:var(--pitch);font-weight:900">@${pm.quota}</span>`:''}
+            </div>`).join('');
+          h+=`<div class="proposal" style="margin-bottom:8px">
+            <div class="tag">${L(i)}</div>
+            <div class="txt" style="font-size:12px;padding-right:0">
+              ${pmRows||'—'}
+              ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:4px;border-top:1px solid var(--line)">Giocata €${p.giocata}${p.vincita_pot?' · Vincita pot. €'+p.vincita_pot:''}</div>`:''}
+            </div>
+            ${p.profiles?.name?`<div style="position:absolute;right:10px;bottom:24px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(p.profiles.name)}</div>`:''}
+          </div>`;
+        });
+        h+=`</div>`;
+      } else {
+        h+=`<div class="card"><div class="sub center">In attesa delle proposte di ${esc(couple.name)}…</div></div>`;
+      }
     }
     return h;
   }
@@ -925,10 +957,10 @@ function viewTurno(){
       </div>
       ${totalVotes>0||r.status==='closed'?`
         <div class="votefill" style="width:${pct}%"></div>
-        <div class="votecount tooltip-trigger" data-voters="${
+        <div class="votecount ${pct>=25?'votecount-in':'votecount-out'} tooltip-trigger" data-voters="${
           (r.votes||[]).filter(v=>v.proposal_id===p.id).map(v=>{
-            const prof=A.profile?.id===v.user_id?A.profile:null;
-            return prof?.name||v.user_id.slice(0,6);
+            const vProf=v.profiles;
+            return vProf?.name||v.user_id.slice(0,6);
           }).join(', ')||''
         }">${cnt} vot${cnt===1?'o':'i'}</div>`:''}
     </div>`;
@@ -998,10 +1030,14 @@ function viewCalendario(){
     h+=`<div class="rs-empty">Tocca una partita per aggiungerla al round</div>`;
   } else {
     selMatches.forEach(m=>{
+      // recupera odds_url dal round_matches DB se disponibile
+      const rmEntry=tRound?(tRound.round_matches||[]).find(rm=>rm.matches&&rm.matches.team_home===m.home&&rm.matches.team_away===m.away):null;
+      const oddsUrl=rmEntry?.matches?.odds_url||null;
       h+=`<div class="rs-row">
         ${flagImg(m.home,18)} ${flagImg(m.away,18)}
         <span class="rs-teams">${esc(m.home)} – ${esc(m.away)}</span>
         <span class="rs-time">${m.time}</span>
+        ${oddsUrl?`<a href="${esc(oddsUrl)}" target="_blank" rel="noopener" style="color:var(--pitch);flex:none;line-height:1;text-decoration:none" onclick="event.stopPropagation()">${EXT_ICON}</a>`:''}
       </div>`;
     });
   }
@@ -1077,7 +1113,7 @@ function viewStorico(){
 
       ${isOpen?`<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px" onclick="event.stopPropagation()">
         ${proposals.length===0?`<div class="sub">Nessuna proposta.</div>`:''}
-        ${[...proposals].sort((a,b)=>(counts[b.id]||0)-(counts[a.id]||0)).map((p,i)=>{
+        ${[...proposals].sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||'')).map((p,i)=>{
           const cnt=counts[p.id]||0;
           const pct=maxC>0?Math.round(cnt/maxC*100):0;
           const pms=(p.proposal_matches||[]).sort((a,b)=>{
@@ -1109,7 +1145,12 @@ function viewStorico(){
                 ${outcomeBtn('pending','In attesa','pend')}
               </div>
             </div>
-            ${votes.length>0?`<div class="votefill" style="width:${pct}%"></div><div class="votecount">${cnt} vot${cnt===1?'o':'i'}</div>`:''}
+            ${p.profiles?.name?`<div style="position:absolute;right:10px;bottom:22px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(p.profiles.name)}</div>`:''}
+            ${votes.length>0?`
+              <div class="votefill" style="width:${pct}%"></div>
+              <div class="votecount ${pct>=25?'votecount-in':'votecount-out'} tooltip-trigger" data-voters="${
+                votes.filter(v=>v.proposal_id===p.id).map(v=>v.profiles?.name||v.user_id.slice(0,6)).join(', ')||''
+              }">${cnt} vot${cnt===1?'o':'i'}</div>`:''}
           </div>`;
         }).join('')}
       </div>`:''}
@@ -1204,8 +1245,9 @@ async function resetAll(){
     tip.textContent='Voti: '+voters;
     tip.classList.add('show');
     const rect=el.getBoundingClientRect();
-    tip.style.left=Math.min(rect.left,window.innerWidth-210)+'px';
-    tip.style.top=(rect.top-40)+'px';
+    const tipW=200;
+    tip.style.left=Math.min(Math.max(rect.right-tipW,8),window.innerWidth-tipW-8)+'px';
+    tip.style.top=Math.max(rect.top-44,8)+'px';
     clearTimeout(hideTimer);
   }
   function hideTip(){
