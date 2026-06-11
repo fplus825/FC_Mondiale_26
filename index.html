@@ -499,12 +499,10 @@ A.saveProposal=async()=>{
   const r=cur();
   if(!r||r.status!=='open'){showToast('Round non in stato open');return;}
   const existing=(r.proposals||[]).filter(p=>!p._draft);
-  if(existing.length>=5){showToast('Massimo 5 proposte per round');return;}
 
   // raccogli dati dal form
   const giocata=parseFloat(document.getElementById('prop-giocata')?.value)||null;
   const vincita=parseFloat(document.getElementById('prop-vincita')?.value)||null;
-  if(!giocata||!vincita){showToast('Inserisci giocata e vincita potenziale');return;}
 
   // raccogli le partite con scommessa e quota
   const roundMatches=(r.round_matches||[]).map(rm=>rm.matches).filter(Boolean);
@@ -583,6 +581,18 @@ A.reopenVoting=async()=>{
   await sb.from('proposals').update({is_selected:false}).eq('round_id',r.id);
   await sb.from('rounds').update({status:'voting'}).eq('id',r.id);
   await loadRounds();render();
+};
+
+A.setGiocataReale=async(propId,val)=>{
+  const v=val===''?null:parseFloat(val);
+  await sb.from('proposals').update({giocata_reale:v}).eq('id',propId);
+  await loadRounds();
+};
+
+A.setVincitaReale=async(propId,val)=>{
+  const v=val===''?null:parseFloat(val);
+  await sb.from('proposals').update({vincita_reale:v}).eq('id',propId);
+  await loadRounds();
 };
 
 A.toggleSelected=async(propId)=>{
@@ -697,7 +707,7 @@ function render(){
   }
   if(!A.user){renderAuth();return;}
 
-  const tabs=[['turno','Turno'],['calendario','Calendario'],['storico','Registro'],['classifica','Classifica'],['coppie','Coppie']];
+  const tabs=[['turno','Turno'],['calendario','Calendario'],['storico','Registro'],['balance','Balance'],['coppie','Coppie']];
   let html=`
   <div class="sticky-top">
     <div class="header">
@@ -718,6 +728,7 @@ function render(){
   else if(A.view==='calendario') html+=viewCalendario();
   else if(A.view==='storico')    html+=viewStorico();
   else if(A.view==='classifica') html+=viewClassifica();
+  else if(A.view==='balance') html+=viewBalance();
   else if(A.view==='coppie')     html+=viewCoppie();
 
   document.getElementById('root').innerHTML=html;
@@ -834,7 +845,7 @@ function viewTurno(){
     if(isProposer){
       // mostra proposte già salvate
       if(savedProposals.length){
-        h+=`<div class="card"><div class="eyebrow">Proposte inserite (${savedProposals.length}/5)</div>`;
+        h+=`<div class="card"><div class="eyebrow">Proposte inserite (${savedProposals.length})</div>`;
         savedProposals.forEach((p,i)=>{
           const pms=(p.proposal_matches||[]).sort((a,b)=>{
             const ma=a.matches,mb=b.matches;
@@ -861,9 +872,9 @@ function viewTurno(){
       }
 
       // form nuova proposta (se < 5)
-      if(savedProposals.length<5){
+      if(true){
         h+=`<div class="card glow">
-          <div class="eyebrow">Nuova proposta ${savedProposals.length+1}/5</div>
+          <div class="eyebrow">Nuova proposta ${savedProposals.length+1}</div>
           <div class="sub" style="margin-bottom:14px">Seleziona le scommesse sulle partite del round.</div>`;
 
         if(!roundMatchesList.length){
@@ -908,7 +919,7 @@ function viewTurno(){
       if(savedProposals.length>0){
         h+=`<div class="card">
           <div class="sub" style="margin-bottom:12px">Quando hai finito di inserire le proposte, apri la votazione.</div>
-          <button class="btn btn-coral" onclick="A.openVoting()">Apri la votazione (${savedProposals.length} proposta${savedProposals.length>1?'e':''})</button>
+          <button class="btn btn-coral" onclick="A.openVoting()">Apri la votazione (${savedProposals.length} propost${savedProposals.length>1?'e':'a'})</button>
         </div>`;
       }
     } else {
@@ -1010,11 +1021,18 @@ function viewTurno(){
         <div class="eyebrow" style="color:var(--gold)">Seleziona le proposte da piazzare</div>
         <div class="sub" style="margin-bottom:12px">Tocca una proposta per selezionarla/deselezionarla. Gli esiti si registrano nel Registro.</div>
         ${(proposals||[]).sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||'')).map((p,i)=>`
-          <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="A.toggleSelected('${p.id}')">
-            <div style="width:28px;height:28px;border-radius:8px;border:1.5px solid ${p.is_selected?'var(--pitch)':'var(--line)'};background:${p.is_selected?'var(--pitch)':'transparent'};display:grid;place-items:center;flex:none;transition:.15s">
-              ${p.is_selected?'<span style="color:#06110b;font-weight:900;font-size:14px">✓</span>':''}
+          <div style="padding:10px 0;border-bottom:1px solid var(--line)">
+            <div style="display:flex;align-items:center;gap:10px;cursor:pointer" onclick="A.toggleSelected('${p.id}')">
+              <div style="width:28px;height:28px;border-radius:8px;border:1.5px solid ${p.is_selected?'var(--pitch)':'var(--line)'};background:${p.is_selected?'var(--pitch)':'transparent'};display:grid;place-items:center;flex:none;transition:.15s">
+                ${p.is_selected?'<span style="color:#06110b;font-weight:900;font-size:14px">✓</span>':''}
+              </div>
+              <div style="flex:1;font-weight:700;font-size:13px">${L(i)} — ${esc(p.text||((p.proposal_matches||[]).map(pm=>pm.scommessa).join(' + ')))}</div>
             </div>
-            <div style="flex:1;font-weight:700;font-size:13px">${L(i)} — ${esc(p.text||((p.proposal_matches||[]).map(pm=>pm.scommessa).join(' + ')))}</div>
+            ${p.is_selected?`<div style="display:flex;align-items:center;gap:8px;margin-top:8px;margin-left:38px">
+              <span style="font-size:11px;color:var(--muted);font-weight:700;white-space:nowrap">Giocato €</span>
+              <input type="number" step="0.01" min="0" class="input" style="max-width:120px;padding:8px 10px" value="${p.giocata_reale!=null?p.giocata_reale:''}" placeholder="0.00"
+                onchange="A.setGiocataReale('${p.id}',this.value)">
+            </div>`:''}
           </div>`).join('')}
       </div>`;
     }
@@ -1170,6 +1188,11 @@ function viewStorico(){
                 ${outcomeBtn('lost','Persa ✕','lost')}
                 ${outcomeBtn('pending','In attesa','pend')}
               </div>
+              ${p.outcome==='won'?`<div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+                <span style="font-size:11px;color:var(--muted);font-weight:700;white-space:nowrap">Vincita €</span>
+                <input type="number" step="0.01" min="0" class="input" style="max-width:120px;padding:8px 10px" value="${p.vincita_reale!=null?p.vincita_reale:''}" placeholder="0.00"
+                  onclick="event.stopPropagation()" onchange="A.setVincitaReale('${p.id}',this.value)">
+              </div>`:''}
             </div>
             ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:22px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(profileName(p.author_id))}</div>`:''}
             ${votes.length>0?`
@@ -1195,8 +1218,8 @@ function viewClassifica(){
   const closed=A.rounds.filter(r=>r.status==='closed');
   const cs=COUPLES.map((c,idx)=>{
     const mine=closed.filter((_,i)=>i%COUPLES.length===idx);
-    const won=mine.filter(r=>(r.proposals||[]).find(p=>p.is_selected&&p.outcome==='won')).length;
-    const lost=mine.filter(r=>(r.proposals||[]).find(p=>p.is_selected&&p.outcome==='lost')).length;
+    const won=mine.reduce((s,r)=>s+(r.proposals||[]).filter(p=>p.is_selected&&p.outcome==='won').length,0);
+    const lost=mine.reduce((s,r)=>s+(r.proposals||[]).filter(p=>p.is_selected&&p.outcome==='lost').length,0);
     return{name:c.name,played:mine.length,won,lost};
   }).sort((a,b)=>b.won-a.won||a.lost-b.lost);
 
@@ -1216,8 +1239,8 @@ function viewClassifica(){
   const rank=Object.entries(pts).map(([uid,v])=>({name:profileName(uid),pts:v}))
     .sort((a,b)=>b.pts-a.pts);
 
-  const totW=closed.filter(r=>(r.proposals||[]).some(p=>p.is_selected&&p.outcome==='won')).length;
-  const totL=closed.filter(r=>(r.proposals||[]).some(p=>p.is_selected&&p.outcome==='lost')).length;
+  const totW=closed.reduce((s,r)=>s+(r.proposals||[]).filter(p=>p.is_selected&&p.outcome==='won').length,0);
+  const totL=closed.reduce((s,r)=>s+(r.proposals||[]).filter(p=>p.is_selected&&p.outcome==='lost').length,0);
 
   return`<div class="card"><div class="eyebrow">Bilancio del pool</div>
     <div class="statgrid">
@@ -1241,6 +1264,104 @@ function viewClassifica(){
 }
 
 // ── VIEW: COPPIE ──────────────────────────────────────────────
+function viewBalance(){
+  const eur=(n)=>(n==null?0:n).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const closed=A.rounds.filter(r=>r.status==='closed');
+
+  // costruisci righe per round (ordine cronologico per il cumulato)
+  const sorted=[...closed].sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
+  let cumBalance=0;
+  const rows=sorted.map((r,idx)=>{
+    const sel=(r.proposals||[]).filter(p=>p.is_selected);
+    const nBets=sel.length;
+    const nWon=sel.filter(p=>p.outcome==='won').length;
+    const nOpen=sel.filter(p=>p.outcome==='pending').length;
+    const wagers=sel.reduce((s,p)=>s+(p.giocata_reale||0),0);
+    const won=sel.reduce((s,p)=>s+(p.vincita_reale||0),0);
+    const balRound=won-wagers;
+    cumBalance+=balRound;
+    const dbCouple=A.couples.find(c=>c.id===r.couple_id);
+    return {
+      n:idx+1,
+      couple:dbCouple?.name||'',
+      nBets,nWon,nOpen,wagers,won,balRound,balTot:cumBalance
+    };
+  });
+
+  // aggregati
+  const tBets=rows.reduce((s,r)=>s+r.nBets,0);
+  const tWon=rows.reduce((s,r)=>s+r.nWon,0);
+  const tOpen=rows.reduce((s,r)=>s+r.nOpen,0);
+  const tWagers=rows.reduce((s,r)=>s+r.wagers,0);
+  const tWonEur=rows.reduce((s,r)=>s+r.won,0);
+  const payout=tWagers>0?(tWonEur/tWagers):0;
+  const tBalance=tWonEur-tWagers;
+  const pctWon=tBets>0?Math.round(tWon/tBets*100):0;
+
+  // top win / top payout (su singola proposta selezionata)
+  const allSel=closed.flatMap(r=>(r.proposals||[]).filter(p=>p.is_selected));
+  const topWin=allSel.reduce((mx,p)=>Math.max(mx,p.vincita_reale||0),0);
+  const topPayout=allSel.reduce((mx,p)=>{
+    if(p.giocata_reale&&p.giocata_reale>0&&p.vincita_reale!=null){
+      return Math.max(mx,p.vincita_reale/p.giocata_reale);
+    }
+    return mx;
+  },0);
+
+  if(!closed.length){
+    return `<div class="card"><div class="sub center">Ancora nessun turno concluso.</div></div>`;
+  }
+
+  // card riepilogative
+  let h=`<div class="card"><div class="eyebrow">Riepilogo</div>
+    <div class="statgrid">
+      <div class="stat"><div class="k"># bets</div><div class="v">${tBets}</div></div>
+      <div class="stat"><div class="k"># vinte</div><div class="v green">${tWon} <span style="font-size:13px;color:var(--muted)">(${pctWon}%)</span></div></div>
+      <div class="stat"><div class="k"># aperte</div><div class="v">${tOpen}</div></div>
+      <div class="stat"><div class="k">TOT wagers €</div><div class="v" style="font-size:22px">${eur(tWagers)}</div></div>
+      <div class="stat"><div class="k">TOT won €</div><div class="v green" style="font-size:22px">${eur(tWonEur)}</div></div>
+      <div class="stat"><div class="k">Payout</div><div class="v gold" style="font-size:22px">${payout.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
+      <div class="stat"><div class="k">TOT balance €</div><div class="v ${tBalance>=0?'green':'coral'}" style="font-size:22px">${eur(tBalance)}</div></div>
+      <div class="stat"><div class="k">Top Win €</div><div class="v gold" style="font-size:22px">${eur(topWin)}</div></div>
+      <div class="stat"><div class="k">Top Payout</div><div class="v gold" style="font-size:22px">${topPayout.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
+    </div>
+  </div>`;
+
+  // tabella per round
+  h+=`<div class="card"><div class="eyebrow">Dettaglio per round</div>
+    <div style="overflow-x:auto;margin:0 -4px">
+    <table style="width:100%;border-collapse:collapse;font-size:11px;min-width:520px">
+      <thead>
+        <tr style="color:var(--muted);text-align:right">
+          <th style="text-align:left;padding:6px 8px;font-weight:700">Round</th>
+          <th style="padding:6px 6px;font-weight:700"># bets</th>
+          <th style="padding:6px 6px;font-weight:700"># vinte</th>
+          <th style="padding:6px 6px;font-weight:700"># aperte</th>
+          <th style="padding:6px 6px;font-weight:700">wagers €</th>
+          <th style="padding:6px 6px;font-weight:700">won €</th>
+          <th style="padding:6px 6px;font-weight:700">bal. round €</th>
+          <th style="padding:6px 8px;font-weight:700">bal. tot €</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(r=>`<tr style="border-top:1px solid var(--line);text-align:right">
+          <td style="text-align:left;padding:8px;font-weight:800"><span style="color:var(--pitch)">#${r.n}</span> <span style="color:var(--muted);font-weight:600;font-size:10px">${esc(r.couple)}</span></td>
+          <td style="padding:8px 6px">${r.nBets}</td>
+          <td style="padding:8px 6px;color:var(--pitch)">${r.nWon}</td>
+          <td style="padding:8px 6px;color:var(--muted)">${r.nOpen}</td>
+          <td style="padding:8px 6px">${eur(r.wagers)}</td>
+          <td style="padding:8px 6px">${eur(r.won)}</td>
+          <td style="padding:8px 6px;color:${r.balRound>=0?'var(--pitch)':'var(--coral)'}">${eur(r.balRound)}</td>
+          <td style="padding:8px;font-weight:800;color:${r.balTot>=0?'var(--pitch)':'var(--coral)'}">${eur(r.balTot)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    </div>
+  </div>`;
+
+  return h;
+}
+
 function viewCoppie(){
   const r=cur();
   const activeCoupleId=r?.couple_id||null;
