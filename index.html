@@ -74,6 +74,11 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
 .couple-card .ttl{font-weight:900;font-size:13px;color:var(--pitch);margin-bottom:6px}
 .couple-card.active{border-color:var(--pitch);box-shadow:0 0 0 1px rgba(182,255,60,.2)}
 .statgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.statgrid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.statgrid-3 .stat{padding:10px 8px}
+.statgrid-3 .stat .v{font-size:20px}
+.statgrid-3 .stat .k{font-size:9.5px}
+@media(min-width:600px){.balance-table-card{max-width:none;margin-left:-40px;margin-right:-40px}}
 .stat{background:#08160f;border:1px solid var(--line);border-radius:14px;padding:14px}
 .stat .k{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700}
 .stat .v{font-family:'Anton',sans-serif;font-size:30px;line-height:1;margin-top:6px}
@@ -99,6 +104,8 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
 .outcome-row{display:flex;gap:9px}
 @media(max-width:380px){.outcome-row{flex-direction:column}}
 .outcome-row>*{flex:1}
+.outcome-btn{padding:6px 8px;font-size:11px}
+@media(max-width:420px){.outcome-btn{padding:5px 4px;font-size:10px}}
 .center{text-align:center}
 .pop{animation:pop .35s ease both}
 /* ── Calendario ── */
@@ -343,6 +350,7 @@ const A={
   couples:[],     // da supabase
   profiles:[],    // da supabase
   calPhase:'Tutti',
+  showPast:false,
   loading:true,
 };
 window.A=A;
@@ -865,7 +873,7 @@ function viewTurno(){
               ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:6px">Giocata: €${p.giocata}${p.vincita_pot?' · Vincita pot.: €'+p.vincita_pot:''}</div>`:''}
             </div>
             <button onclick="event.stopPropagation();A.deleteProposal('${p.id}')" style="position:absolute;right:10px;top:10px;background:rgba(255,90,60,.15);border:none;border-radius:8px;color:var(--coral);font-size:11px;font-weight:900;padding:4px 8px;cursor:pointer">✕</button>
-            ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:24px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(profileName(p.author_id))}</div>`:''}
+            ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:6px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(profileName(p.author_id))}</div>`:''}
           </div>`;
         });
         h+=`</div>`;
@@ -944,7 +952,7 @@ function viewTurno(){
               ${pmRows||'—'}
               ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:6px">Giocata €${p.giocata}${p.vincita_pot?' · Vincita pot. €'+p.vincita_pot:''}</div>`:''}
             </div>
-            ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:24px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(profileName(p.author_id))}</div>`:''}
+            ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:6px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(profileName(p.author_id))}</div>`:''}
           </div>`;
         });
         h+=`</div>`;
@@ -1087,9 +1095,13 @@ function viewCalendario(){
   const PHASES=['Tutti','Gironi','Sedicesimi','Ottavi','Quarti','Semifinale','Finale 3° posto','Finale'];
   h=`<div class="cal-sticky">${h}<div class="phase-scroll">${PHASES.map(p=>`<button class="phase-pill ${A.calPhase===p?'active':''}" onclick="A.calPhase='${p}';render()">${p}</button>`).join('')}</div></div>`;
 
+  const now=new Date();
+  const isPast=(m)=>new Date(m.date+'T'+(m.time||'23:59')+':00')<now;
   const filtered=A.calPhase==='Tutti'?MATCHES:MATCHES.filter(m=>m.stage===A.calPhase);
+  const futureM=filtered.filter(m=>!isPast(m));
+  const pastM=filtered.filter(m=>isPast(m));
   const grouped={};
-  filtered.forEach(m=>{if(!grouped[m.date])grouped[m.date]=[];grouped[m.date].push(m);});
+  futureM.forEach(m=>{if(!grouped[m.date])grouped[m.date]=[];grouped[m.date].push(m);});
 
   Object.entries(grouped).sort(([a],[b])=>a.localeCompare(b)).forEach(([date,matches])=>{
     const isToday=date===today;
@@ -1117,8 +1129,35 @@ function viewCalendario(){
     });
     h+=`</div>`;
   });
+
+  // sezione partite già giocate (collassata)
+  if(pastM.length){
+    const pastGrouped={};
+    pastM.forEach(m=>{if(!pastGrouped[m.date])pastGrouped[m.date]=[];pastGrouped[m.date].push(m);});
+    h+=`<div style="margin-top:16px">
+      <div onclick="A.togglePast()" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:10px 4px;color:var(--muted)">
+        <span style="font-weight:800;font-size:12px">Partite gia giocate (${pastM.length})</span>
+        <span style="font-size:14px;transition:transform .2s;transform:rotate(${A.showPast?180:0}deg);margin-left:auto">▾</span>
+      </div>
+      ${A.showPast?Object.entries(pastGrouped).sort(([a],[b])=>a.localeCompare(b)).map(([date,matches])=>`
+        <div class="day-group" style="opacity:.55">
+          <div class="day-header"><div class="day-label">${fmtDay(date)}</div></div>
+          ${matches.map(m=>`<div class="match-row" style="cursor:default">
+            <div class="match-time">${m.time?m.time.slice(0,5):''}</div>
+            <div class="match-teams">
+              <div class="match-team">${flagImg(m.home)} <span class="tname">${esc(m.home)}</span></div>
+              <div class="match-team">${flagImg(m.away)} <span class="tname">${esc(m.away)}</span></div>
+            </div>
+            <div class="match-tag">${m.group?`<span class="group-tag">Gr. ${m.group}</span>`:`<span class="stage-tag">${esc(m.stage)}</span>`}</div>
+          </div>`).join('')}
+        </div>`).join(''):''}
+    </div>`;
+  }
+
   return h;
 }
+
+A.togglePast=()=>{A.showPast=!A.showPast;render();};
 
 // ── VIEW: STORICO ─────────────────────────────────────────────
 // stato espansione registro
@@ -1150,7 +1189,7 @@ function viewStorico(){
         <div style="font-family:'Anton';font-size:22px;color:var(--pitch);width:32px;flex:none">${rIdx+1}</div>
         <div style="flex:1;min-width:0">
           <div style="font-weight:900;font-size:14px;color:var(--pitch);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(coupleName)}</div>
-          <div style="font-size:11px;color:var(--muted)">${fmtDate(r.date)} · ${statusLabel}${selectedProps.length?' · '+selectedProps.length+' scelt'+(selectedProps.length===1?'a':'e'):''}</div>
+          <div style="font-size:11px;color:var(--muted)">${fmtDate(r.date)} · ${selectedProps.length} giocat${selectedProps.length===1?'a':'e'} / ${selectedProps.filter(p=>p.outcome==='won').length} vint${selectedProps.filter(p=>p.outcome==='won').length===1?'a':'e'} / ${selectedProps.filter(p=>p.outcome==='pending').length} apert${selectedProps.filter(p=>p.outcome==='pending').length===1?'a':'e'}</div>
         </div>
         <div style="font-size:18px;color:var(--muted);transition:transform .2s;transform:rotate(${isOpen?180:0}deg)">▾</div>
       </div>
@@ -1172,8 +1211,8 @@ function viewStorico(){
               ${pm.quota?`<span style="font-size:11px;color:var(--pitch);font-weight:900">@${pm.quota}</span>`:''}
             </div>`).join('');
           const outcomeBtn=(outcome,label,cls)=>
-            `<button onclick="event.stopPropagation();A.setOutcomeReg('${p.id}','${outcome}')"
-              style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid var(--line);font-size:11px;font-weight:900;font-family:inherit;cursor:pointer;
+            `<button class="outcome-btn" onclick="event.stopPropagation();A.setOutcomeReg('${p.id}','${outcome}')"
+              style="flex:1;border-radius:8px;border:1px solid var(--line);font-weight:900;font-family:inherit;cursor:pointer;
               background:${p.outcome===outcome?(outcome==='won'?'var(--pitch)':'var(--coral)'):'transparent'};
               color:${p.outcome===outcome?(outcome==='won'?'#06110b':'#fff'):'var(--muted)'}">${label}</button>`;
           return `<div class="proposal ${p.is_selected?'winner':''}" style="margin-bottom:8px">
@@ -1194,7 +1233,7 @@ function viewStorico(){
                   onclick="event.stopPropagation()" onchange="A.setVincitaReale('${p.id}',this.value)">
               </div>`:''}
             </div>
-            ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:22px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(profileName(p.author_id))}</div>`:''}
+            ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:6px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(profileName(p.author_id))}</div>`:''}
             ${votes.length>0?`
               <div class="votefill" style="width:${pct}%"></div>
               <div class="votecount ${pct>=25?'votecount-in':'votecount-out'} tooltip-trigger" data-voters="${
@@ -1313,22 +1352,23 @@ function viewBalance(){
   }
 
   // card riepilogative
+  const payoutPct=(tWagers>0?(tWonEur/tWagers*100):0).toLocaleString('it-IT',{minimumFractionDigits:1,maximumFractionDigits:1});
   let h=`<div class="card"><div class="eyebrow">Riepilogo</div>
-    <div class="statgrid">
+    <div class="statgrid-3">
       <div class="stat"><div class="k"># bets</div><div class="v">${tBets}</div></div>
-      <div class="stat"><div class="k"># vinte</div><div class="v green">${tWon} <span style="font-size:13px;color:var(--muted)">(${pctWon}%)</span></div></div>
+      <div class="stat"><div class="k"># vinte</div><div class="v green">${tWon} <span style="font-size:11px;color:var(--muted)">(${pctWon}%)</span></div></div>
       <div class="stat"><div class="k"># aperte</div><div class="v">${tOpen}</div></div>
-      <div class="stat"><div class="k">TOT wagers €</div><div class="v" style="font-size:22px">${eur(tWagers)}</div></div>
-      <div class="stat"><div class="k">TOT won €</div><div class="v green" style="font-size:22px">${eur(tWonEur)}</div></div>
-      <div class="stat"><div class="k">Payout</div><div class="v gold" style="font-size:22px">${payout.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
-      <div class="stat"><div class="k">TOT balance €</div><div class="v ${tBalance>=0?'green':'coral'}" style="font-size:22px">${eur(tBalance)}</div></div>
-      <div class="stat"><div class="k">Top Win €</div><div class="v gold" style="font-size:22px">${eur(topWin)}</div></div>
-      <div class="stat"><div class="k">Top Payout</div><div class="v gold" style="font-size:22px">${topPayout.toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
+      <div class="stat"><div class="k">TOT wagers €</div><div class="v">${eur(tWagers)}</div></div>
+      <div class="stat"><div class="k">TOT won €</div><div class="v green">${eur(tWonEur)}</div></div>
+      <div class="stat"><div class="k">Payout</div><div class="v gold">${payoutPct}%</div></div>
+      <div class="stat"><div class="k">TOT balance €</div><div class="v ${tBalance>=0?'green':'coral'}">${eur(tBalance)}</div></div>
+      <div class="stat"><div class="k">Top Win €</div><div class="v gold">${eur(topWin)}</div></div>
+      <div class="stat"><div class="k">Top Payout</div><div class="v gold">${(topPayout*100).toLocaleString('it-IT',{minimumFractionDigits:1,maximumFractionDigits:1})}%</div></div>
     </div>
   </div>`;
 
   // tabella per round
-  h+=`<div class="card"><div class="eyebrow">Dettaglio per round</div>
+  h+=`<div class="card balance-table-card"><div class="eyebrow">Dettaglio per round</div>
     <div style="overflow-x:auto;margin:0 -4px">
     <table style="width:100%;border-collapse:collapse;font-size:11px;min-width:520px">
       <thead>
