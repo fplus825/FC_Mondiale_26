@@ -477,14 +477,14 @@ async function destroyRealtime(){
 A.setView=(v)=>{A.view=v;render();};
 
 A.startRound=async()=>{
-  // se esiste già un draft, portarlo a open
-  const draft=A.rounds.find(r=>r.status==='draft');
+  // se esiste già un draft, promuovilo a open (mantiene partite e coppia)
+  const draft=draftRound();
   if(draft){
     const {error}=await sb.from('rounds').update({status:'open',date:todayISO()}).eq('id',draft.id);
     if(error){showToast('Errore: '+error.message);return;}
     await loadRounds();render();return;
   }
-  // altrimenti crea nuovo round open
+  // altrimenti crea nuovo round open con la prossima coppia
   const idx=A.rounds.filter(r=>r.status!=='draft').length%COUPLES.length;
   const coupleId=A.couples[idx]?.id;
   if(!coupleId){showToast('Coppie non trovate nel DB');return;}
@@ -679,7 +679,15 @@ A.toggleMatch=async(matchId)=>{
   }
 };
 
-function cur(){return A.rounds[A.rounds.length-1]||null;}
+function cur(){
+  // round attivo = ultimo non-draft (open/voting/closed)
+  const active=A.rounds.filter(r=>r.status!=='draft');
+  return active[active.length-1]||null;
+}
+function draftRound(){
+  // draft in preparazione per il prossimo round
+  return A.rounds.find(r=>r.status==='draft')||null;
+}
 
 // ── RENDER PRINCIPALE ─────────────────────────────────────────
 function render(){
@@ -754,6 +762,19 @@ function renderAuth(){
 
 // ── VIEW: TURNO ───────────────────────────────────────────────
 function viewTurno(){
+  const activeRound=cur();
+  const draft=draftRound();
+  // se non c'è round attivo ma c'è un draft, mostra schermata avvio con partite del draft
+  if(!activeRound&&draft){
+    const dbCouple=A.couples.find(c=>c.id===draft.couple_id);
+    const coupleName=dbCouple?.name||COUPLES[0].name;
+    const nMatches=(draft.round_matches||[]).length;
+    return `<div class="card glow center">
+      <div class="sub" style="margin-bottom:6px">${nMatches} partit${nMatches===1?'a':'e'} selezionat${nMatches===1?'a':'e'} nel calendario.</div>
+      <div class="h2" style="margin-bottom:12px;color:var(--pitch)">${esc(coupleName)}</div>
+      <button class="btn btn-primary" onclick="A.startRound()">Avvia il turno</button>
+    </div>`;
+  }
   if(!A.rounds.length){
     return `<div class="card glow center">
       <div style="font-size:40px">🏁</div>
@@ -830,7 +851,7 @@ function viewTurno(){
             <div class="tag">${L(i)}</div>
             <div class="txt" style="font-size:12px;padding-right:28px">
               ${pmRows||'—'}
-              ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:4px;border-top:1px solid var(--line)">Giocata: €${p.giocata}${p.vincita_pot?' · Vincita pot.: €'+p.vincita_pot:''}</div>`:''}
+              ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:6px">Giocata: €${p.giocata}${p.vincita_pot?' · Vincita pot.: €'+p.vincita_pot:''}</div>`:''}
             </div>
             <button onclick="event.stopPropagation();A.deleteProposal('${p.id}')" style="position:absolute;right:10px;top:10px;background:rgba(255,90,60,.15);border:none;border-radius:8px;color:var(--coral);font-size:11px;font-weight:900;padding:4px 8px;cursor:pointer">✕</button>
             ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:24px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(profileName(p.author_id))}</div>`:''}
@@ -910,7 +931,7 @@ function viewTurno(){
             <div class="tag">${L(i)}</div>
             <div class="txt" style="font-size:12px;padding-right:0">
               ${pmRows||'—'}
-              ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:4px;border-top:1px solid var(--line)">Giocata €${p.giocata}${p.vincita_pot?' · Vincita pot. €'+p.vincita_pot:''}</div>`:''}
+              ${p.giocata?`<div style="font-size:11px;color:var(--muted);margin-top:6px">Giocata €${p.giocata}${p.vincita_pot?' · Vincita pot. €'+p.vincita_pot:''}</div>`:''}
             </div>
             ${profileName(p.author_id)?`<div style="position:absolute;right:10px;bottom:24px;font-size:9px;color:var(--muted2);font-weight:700">proposta da ${esc(profileName(p.author_id))}</div>`:''}
           </div>`;
@@ -958,7 +979,7 @@ function viewTurno(){
       </div>
       <div class="txt">
         ${pmDetail||esc(p.text)}
-        ${p.giocata?`<div style="font-size:10px;color:var(--muted);margin-top:4px;padding-top:3px;border-top:1px solid var(--line)">Giocata €${p.giocata}${p.vincita_pot?' · Vincita pot. €'+p.vincita_pot:''}</div>`:''}
+        ${p.giocata?`<div style="font-size:10px;color:var(--muted);margin-top:4px">Giocata €${p.giocata}${p.vincita_pot?' · Vincita pot. €'+p.vincita_pot:''}</div>`:''}
       </div>
       ${totalVotes>0||r.status==='closed'?`
         <div class="votefill" style="width:${pct}%"></div>
@@ -1088,10 +1109,13 @@ const _regOpen={};
 function viewStorico(){
   if(!A.rounds.length)return`<div class="card"><div class="sub center">Ancora nessun turno.</div></div>`;
   let h='';
-  [...A.rounds].reverse().forEach((r,k)=>{
-    const rIdx=A.rounds.length-1-k;
+  const closedRounds=A.rounds.filter(r=>r.status==='closed');
+  if(!closedRounds.length)return`<div class="card"><div class="sub center">Ancora nessun turno concluso.</div></div>`;
+  [...closedRounds].reverse().forEach((r,k)=>{
+    const rIdx=A.rounds.indexOf(r);
     const dbCouple=A.couples.find(c=>c.id===r.couple_id);
-    const coupleName=dbCouple?.name||COUPLES[rIdx%COUPLES.length]?.name||'';
+    const closedIdx=closedRounds.indexOf(r);
+    const coupleName=dbCouple?.name||COUPLES[closedIdx%COUPLES.length]?.name||'';
     const proposals=r.proposals||[];
     const votes=r.votes||[];
     const selectedProps=proposals.filter(p=>p.is_selected);
@@ -1105,7 +1129,7 @@ function viewStorico(){
 
     h+=`<div class="card" style="margin-bottom:10px;cursor:pointer" onclick="A.toggleReg('${r.id}')">
       <div style="display:flex;align-items:center;gap:10px">
-        <div style="font-family:'Anton';font-size:22px;color:var(--pitch);width:32px;flex:none">${A.rounds.length-k}</div>
+        <div style="font-family:'Anton';font-size:22px;color:var(--pitch);width:32px;flex:none">${rIdx+1}</div>
         <div style="flex:1;min-width:0">
           <div style="font-weight:900;font-size:14px;color:var(--pitch);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(coupleName)}</div>
           <div style="font-size:11px;color:var(--muted)">${fmtDate(r.date)} · ${statusLabel}${selectedProps.length?' · '+selectedProps.length+' scelt'+(selectedProps.length===1?'a':'e'):''}</div>
@@ -1140,7 +1164,7 @@ function viewStorico(){
             </div>
             <div class="txt">
               ${pmDetail||esc(p.text)}
-              ${p.giocata?`<div style="font-size:10px;color:var(--muted);margin-top:4px;padding-top:3px;border-top:1px solid var(--line)">Giocata €${p.giocata}${p.vincita_pot?' · Vincita pot. €'+p.vincita_pot:''}</div>`:''}
+              ${p.giocata?`<div style="font-size:10px;color:var(--muted);margin-top:4px">Giocata €${p.giocata}${p.vincita_pot?' · Vincita pot. €'+p.vincita_pot:''}</div>`:''}
               <div style="display:flex;gap:6px;margin-top:8px">
                 ${outcomeBtn('won','Vinta ✓','won')}
                 ${outcomeBtn('lost','Persa ✕','lost')}
@@ -1176,16 +1200,21 @@ function viewClassifica(){
     return{name:c.name,played:mine.length,won,lost};
   }).sort((a,b)=>b.won-a.won||a.lost-b.lost);
 
-  // pronosticatori: +1 se voto su proposta won, +1 se autore di proposta won
-  const pts={};PEOPLE.forEach(p=>pts[p]=0);
+  // pronosticatori: +1 a chi ha votato una proposta won, +1 all'autore di una proposta won
+  const pts={};
+  (A.profiles||[]).forEach(p=>pts[p.id]=0);
   closed.forEach(r=>{
     (r.proposals||[]).filter(p=>p.outcome==='won').forEach(p=>{
-      // chi ha votato questa proposta
+      // +1 all'autore
+      if(p.author_id!==undefined&&pts[p.author_id]!==undefined)pts[p.author_id]+=1;
+      // +1 a ogni votante
       (r.votes||[]).filter(v=>v.proposal_id===p.id).forEach(v=>{
-        const prof=v.user_id; // useremo id, non nome — da migliorare con join
+        if(pts[v.user_id]!==undefined)pts[v.user_id]+=1;
       });
     });
   });
+  const rank=Object.entries(pts).map(([uid,v])=>({name:profileName(uid),pts:v}))
+    .sort((a,b)=>b.pts-a.pts);
 
   const totW=closed.filter(r=>(r.proposals||[]).some(p=>p.is_selected&&p.outcome==='won')).length;
   const totL=closed.filter(r=>(r.proposals||[]).some(p=>p.is_selected&&p.outcome==='lost')).length;
@@ -1203,8 +1232,11 @@ function viewClassifica(){
       <div class="nm">${esc(c.name)}<div class="note">${c.played} turni · ${c.won}V / ${c.lost}P</div></div>
       <div class="pts">${c.won}</div></div>`).join('')}
   </div>
-  <div class="card"><div class="eyebrow" style="color:var(--muted)">🎯 Classifica pronosticatori</div>
-    <div class="note">Disponibile dopo l'integrazione completa dei profili utente.</div>
+  <div class="card"><div class="eyebrow">🎯 Classifica pronosticatori</div>
+    <div class="note" style="margin-bottom:8px">+1 a chi vota una proposta vincente · +1 a chi la propone</div>
+    ${rank.map((p,i)=>`<div class="rank"><div class="pos ${i===0&&p.pts>0?'top':''}">${i+1}</div>
+      <div class="nm">${esc(p.name)}</div>
+      <div class="pts">${p.pts}</div></div>`).join('')}
   </div>`;
 }
 
