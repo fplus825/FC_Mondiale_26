@@ -75,9 +75,10 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
 .couple-card.active{border-color:var(--pitch);box-shadow:0 0 0 1px rgba(182,255,60,.2)}
 .statgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .statgrid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-.statgrid-3 .stat{padding:10px 8px}
-.statgrid-3 .stat .v{font-size:20px}
+.statgrid-3 .stat{padding:10px 8px;display:flex;flex-direction:column}
+.statgrid-3 .stat .v{font-size:20px;margin-top:auto}
 .statgrid-3 .stat .k{font-size:9.5px}
+.statgrid-3 .stat .sub-couple{margin-top:3px}
 @media(min-width:600px){.balance-table-card{max-width:none;margin-left:-40px;margin-right:-40px}}
 .stat{background:#08160f;border:1px solid var(--line);border-radius:14px;padding:14px}
 .stat .k{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700}
@@ -351,6 +352,7 @@ const A={
   profiles:[],    // da supabase
   calPhase:'Tutti',
   showPast:false,
+  balanceFilter:null,  // id coppia o null per tutte
   loading:true,
 };
 window.A=A;
@@ -1161,6 +1163,7 @@ function viewCalendario(){
 }
 
 A.togglePast=()=>{A.showPast=!A.showPast;render();};
+A.setBalanceFilter=(id)=>{A.balanceFilter=id;render();};
 
 // ── VIEW: STORICO ─────────────────────────────────────────────
 // stato espansione registro
@@ -1213,11 +1216,16 @@ function viewStorico(){
               <span style="flex:1;font-size:11px;font-weight:700">${esc(pm.scommessa)}</span>
               ${pm.quota?`<span style="font-size:11px;color:var(--pitch);font-weight:900">@${pm.quota}</span>`:''}
             </div>`).join('');
-          const outcomeBtn=(outcome,label,cls)=>
-            `<button class="outcome-btn" onclick="event.stopPropagation();A.setOutcomeReg('${p.id}','${outcome}')"
-              style="flex:1;border-radius:8px;border:1px solid var(--line);font-weight:900;font-family:inherit;cursor:pointer;
-              background:${p.outcome===outcome?(outcome==='won'?'var(--pitch)':'var(--coral)'):'transparent'};
-              color:${p.outcome===outcome?(outcome==='won'?'#06110b':'#fff'):'var(--muted)'}">${label}</button>`;
+          const outcomeBtn=(outcome,label,cls)=>{
+            let bg='transparent',col='var(--muted)';
+            if(p.outcome===outcome){
+              if(outcome==='won'){bg='var(--pitch)';col='#06110b';}
+              else if(outcome==='lost'){bg='var(--coral)';col='#fff';}
+              else{bg='var(--gold)';col='#2a1f00';}
+            }
+            return `<button class="outcome-btn" onclick="event.stopPropagation();A.setOutcomeReg('${p.id}','${outcome}')"
+              style="flex:1;border-radius:8px;border:1px solid var(--line);font-weight:900;font-family:inherit;cursor:pointer;background:${bg};color:${col}">${label}</button>`;
+          };
           return `<div class="proposal ${p.is_selected?'winner':''}" style="margin-bottom:8px">
             <div class="tag" style="${p.is_selected?'background:var(--gold);color:#2a1f00':''}">
               ${L(i)}${p.is_selected?'<div style="font-size:8px;margin-top:1px">★</div>':''}
@@ -1308,27 +1316,35 @@ function viewClassifica(){
 // ── VIEW: COPPIE ──────────────────────────────────────────────
 function viewBalance(){
   const eur=(n)=>(n==null?0:n).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const closed=A.rounds.filter(r=>r.status==='closed');
+  const closedAll=A.rounds.filter(r=>r.status==='closed');
 
-  // costruisci righe per round (ordine cronologico per il cumulato)
-  const sorted=[...closed].sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
+  // calcola le righe su TUTTI i round (per il cumulato globale), poi filtra per la vista
+  const sortedAll=[...closedAll].sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
   let cumBalance=0;
-  const rows=sorted.map((r,idx)=>{
+  const allRows=sortedAll.map((r,idx)=>{
     const sel=(r.proposals||[]).filter(p=>p.is_selected);
-    const nBets=sel.length;
-    const nWon=sel.filter(p=>p.outcome==='won').length;
-    const nOpen=sel.filter(p=>p.outcome==='pending').length;
     const wagers=sel.reduce((s,p)=>s+(p.giocata_reale||0),0);
     const won=sel.reduce((s,p)=>s+(p.vincita_reale||0),0);
     const balRound=won-wagers;
     cumBalance+=balRound;
     const dbCouple=A.couples.find(c=>c.id===r.couple_id);
     return {
-      n:idx+1,
+      n:idx+1, round:r, couple_id:r.couple_id,
       couple:dbCouple?.name||'',
-      nBets,nWon,nOpen,wagers,won,balRound,balTot:cumBalance
+      nBets:sel.length,
+      nWon:sel.filter(p=>p.outcome==='won').length,
+      nOpen:sel.filter(p=>p.outcome==='pending').length,
+      wagers, won, balRound, balTot:cumBalance
     };
   });
+
+  // filtro coppia: il balTot resta il cumulato globale, filtriamo solo quali righe mostrare
+  const rows=A.balanceFilter
+    ? allRows.filter(r=>r.couple_id===A.balanceFilter)
+    : allRows;
+  const closed=A.balanceFilter
+    ? closedAll.filter(r=>r.couple_id===A.balanceFilter)
+    : closedAll;
 
   // aggregati
   const tBets=rows.reduce((s,r)=>s+r.nBets,0);
@@ -1367,11 +1383,17 @@ function viewBalance(){
 
   // card riepilogative
   const payoutPct=(tWagers>0?(tWonEur/tWagers*100):0).toLocaleString('it-IT',{minimumFractionDigits:1,maximumFractionDigits:1});
-  const subCouple=(name)=>name?`<div style="font-size:8px;line-height:1.15;color:var(--muted2);font-weight:700;margin-top:3px">${esc(name)}</div>`:'';
-  let h=`<div class="card">
+  const subCouple=(name)=>name?`<div class="sub-couple" style="font-size:8px;line-height:1.15;color:var(--muted2);font-weight:700">${esc(name)}</div>`:'';
+  // pill filtro coppia
+  let h=`<div class="phase-scroll" style="margin-bottom:12px">
+    <button class="phase-pill ${!A.balanceFilter?'active':''}" onclick="A.setBalanceFilter(null)">Tutte</button>
+    ${A.couples.map(c=>`<button class="phase-pill ${A.balanceFilter===c.id?'active':''}" style="font-size:10px" onclick="A.setBalanceFilter('${c.id}')">${esc(c.name)}</button>`).join('')}
+  </div>`;
+
+  h+=`<div class="card">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
       <div class="eyebrow" style="margin:0">Riepilogo</div>
-      <div style="font-weight:900;font-size:13px">balance <span class="${tBalance>=0?'' :''}" style="color:${tBalance>=0?'var(--pitch)':'var(--coral)'}">${eur(tBalance)}€</span></div>
+      <div class="eyebrow" style="margin:0;display:flex;align-items:baseline;gap:6px">balance <span style="font-family:'Anton';font-size:17px;letter-spacing:0;color:${tBalance>=0?'var(--pitch)':'var(--coral)'}">${eur(tBalance)}€</span></div>
     </div>
     <div class="statgrid-3">
       <div class="stat"><div class="k"># bets</div><div class="v">${tBets}</div></div>
