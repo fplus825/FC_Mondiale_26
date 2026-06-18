@@ -75,9 +75,9 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
 .couple-card.active{border-color:var(--pitch);box-shadow:0 0 0 1px rgba(182,255,60,.2)}
 .statgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .statgrid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-.statgrid-3 .stat{padding:10px 8px;display:flex;flex-direction:column}
+.statgrid-3 .stat{padding:8px 8px 10px;display:flex;flex-direction:column;min-height:62px}
 .statgrid-3 .stat .v{font-size:20px;margin-top:auto}
-.statgrid-3 .stat .k{font-size:9.5px}
+.statgrid-3 .stat .k{font-size:9.5px;margin-top:0}
 .statgrid-3 .stat .sub-couple{margin-top:3px}
 @media(min-width:600px){.balance-table-card{max-width:none;margin-left:-40px;margin-right:-40px}}
 .stat{background:#08160f;border:1px solid var(--line);border-radius:14px;padding:14px}
@@ -1392,8 +1392,8 @@ function viewBalance(){
 
   h+=`<div class="card">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
-      <div class="eyebrow" style="margin:0">Riepilogo</div>
-      <div class="eyebrow" style="margin:0;display:flex;align-items:baseline;gap:6px">balance <span style="font-family:'Anton';font-size:17px;letter-spacing:0;color:${tBalance>=0?'var(--pitch)':'var(--coral)'}">${eur(tBalance)}€</span></div>
+      <div class="eyebrow" style="margin:0;line-height:1">Riepilogo</div>
+      <div style="display:flex;align-items:center;gap:6px"><span class="eyebrow" style="margin:0;line-height:1">balance</span><span style="font-family:'Anton';font-size:17px;letter-spacing:0;line-height:1;color:${tBalance>=0?'var(--pitch)':'var(--coral)'}">${eur(tBalance)}€</span></div>
     </div>
     <div class="statgrid-3">
       <div class="stat"><div class="k"># bets</div><div class="v">${tBets}</div></div>
@@ -1425,7 +1425,7 @@ function viewBalance(){
         </tr>
       </thead>
       <tbody>
-        ${rows.map(r=>`<tr style="border-top:1px solid var(--line);text-align:right">
+        ${[...rows].reverse().map(r=>`<tr style="border-top:1px solid var(--line);text-align:right">
           <td style="text-align:left;padding:8px;font-weight:800"><span style="color:var(--pitch)">#${r.n}</span> <span style="color:var(--muted);font-weight:600;font-size:10px">${esc(r.couple)}</span></td>
           <td style="padding:8px 6px">${r.nBets}</td>
           <td style="padding:8px 6px;color:var(--pitch)">${r.nWon}</td>
