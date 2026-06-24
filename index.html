@@ -79,6 +79,9 @@ body{font-family:'Archivo',system-ui,sans-serif;color:var(--ink);min-height:100v
 .statgrid-3 .stat .v{font-size:20px;margin-top:auto}
 .statgrid-3 .stat .k{font-size:9.5px;margin-top:0}
 .statgrid-3 .stat .sub-couple{margin-top:3px}
+.bal-amount{font-size:20px}
+@media(max-width:420px){.statgrid-3 .stat .v{font-size:18px}
+.bal-amount{font-size:18px}}
 @media(min-width:600px){.balance-table-card{max-width:none;margin-left:-40px;margin-right:-40px}}
 .stat{background:#08160f;border:1px solid var(--line);border-radius:14px;padding:14px}
 .stat .k{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700}
@@ -352,7 +355,9 @@ const A={
   profiles:[],    // da supabase
   calPhase:'Tutti',
   showPast:false,
-  balanceFilter:null,  // id coppia o null per tutte
+  balanceFilter:null,  // id coppia, 'antepost', o null per tutte
+  antepost:[],         // proposte antepost
+  regView:'round',     // 'round' o 'antepost' nel registro
   loading:true,
 };
 window.A=A;
@@ -416,16 +421,18 @@ async function signOut(){
 
 // ── Supabase data ─────────────────────────────────────────────
 async function loadRounds(){
-  const [{data:rounds},{data:couples},{data:allProfiles}]=await Promise.all([
+  const [{data:rounds},{data:couples},{data:allProfiles},{data:antepost}]=await Promise.all([
     sb.from('rounds')
       .select(`*, proposals(*, proposal_matches(*, matches(id,date,time,team_home,team_away))), votes(*), round_matches(id, match_id, matches(id,date,time,team_home,team_away,odds_url))`)
       .order('created_at',{ascending:true}),
     sb.from('couples').select('id,name,order_index,member_1,member_2').order('order_index'),
     sb.from('profiles').select('id,name'),
+    sb.from('proposals').select('*').eq('is_antepost',true).order('created_at',{ascending:true}),
   ]);
-  A.rounds=rounds||[];
+  A.rounds=(rounds||[]).filter(r=>!r._isAntepostHolder);
   A.couples=couples||[];
   A.profiles=allProfiles||[];
+  A.antepost=antepost||[];
 }
 
 // Logica round target per selezione partite:
@@ -1169,11 +1176,66 @@ A.setBalanceFilter=(id)=>{A.balanceFilter=id;render();};
 // stato espansione registro
 const _regOpen={};
 
+function antepostOutcomeBtn(p,outcome,label){
+  let bg='transparent',col='var(--muted)';
+  if(p.outcome===outcome){
+    if(outcome==='won'){bg='var(--pitch)';col='#06110b';}
+    else if(outcome==='lost'){bg='var(--coral)';col='#fff';}
+    else{bg='var(--gold)';col='#2a1f00';}
+  }
+  return `<button class="outcome-btn" onclick="A.setOutcomeReg('${p.id}','${outcome}')"
+    style="flex:1;border-radius:8px;border:1px solid var(--line);font-weight:900;font-family:inherit;cursor:pointer;background:${bg};color:${col}">${label}</button>`;
+}
+
+function viewAntepostList(){
+  const ap=A.antepost||[];
+  const nBets=ap.length;
+  const nWon=ap.filter(p=>p.outcome==='won').length;
+  const nOpen=ap.filter(p=>p.outcome==='pending').length;
+  let h=`<div class="card">
+    <div class="eyebrow">Antepost · ${nBets} giocat${nBets===1?'a':'e'} / ${nWon} vint${nWon===1?'a':'e'} / ${nOpen} apert${nOpen===1?'a':'e'}</div>`;
+  if(!ap.length){
+    h+=`<div class="sub" style="margin-top:8px">Nessuna antepost registrata.</div>`;
+  } else {
+    ap.forEach((p,i)=>{
+      h+=`<div class="proposal winner" style="margin-bottom:8px;padding-left:50px">
+        <div class="tag" style="background:var(--gold);color:#2a1f00">${L(i)}</div>
+        <div class="txt">
+          <div style="font-size:13px;font-weight:700">${esc(p.text||'—')}</div>
+          ${p.giocata_reale!=null?`<div style="font-size:10px;color:var(--muted);margin-top:4px">Giocato €${p.giocata_reale}${p.vincita_pot?' · Vincita pot. €'+p.vincita_pot:''}</div>`:''}
+          <div style="display:flex;gap:6px;margin-top:8px">
+            ${antepostOutcomeBtn(p,'won','Vinta ✓')}
+            ${antepostOutcomeBtn(p,'lost','Persa ✕')}
+            ${antepostOutcomeBtn(p,'pending','In attesa')}
+          </div>
+          ${p.outcome==='won'?`<div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+            <span style="font-size:11px;color:var(--muted);font-weight:700;white-space:nowrap">Vincita €</span>
+            <input type="number" step="0.01" min="0" class="input" style="max-width:120px;padding:8px 10px" value="${p.vincita_reale!=null?p.vincita_reale:''}" placeholder="0.00"
+              onchange="A.setVincitaReale('${p.id}',this.value)">
+          </div>`:''}
+        </div>
+      </div>`;
+    });
+  }
+  h+=`</div>`;
+  return h;
+}
+
 function viewStorico(){
-  if(!A.rounds.length)return`<div class="card"><div class="sub center">Ancora nessun turno.</div></div>`;
-  let h='';
+  // selettore Round / Antepost
+  let sel=`<div class="phase-scroll" style="margin-bottom:12px">
+    <button class="phase-pill ${A.regView==='round'?'active':''}" onclick="A.setRegView('round')">Round</button>
+    <button class="phase-pill ${A.regView==='antepost'?'active':''}" onclick="A.setRegView('antepost')">Antepost</button>
+  </div>`;
+
+  if(A.regView==='antepost'){
+    return sel+viewAntepostList();
+  }
+
+  if(!A.rounds.length)return sel+`<div class="card"><div class="sub center">Ancora nessun turno.</div></div>`;
+  let h=sel;
   const closedRounds=A.rounds.filter(r=>r.status==='closed');
-  if(!closedRounds.length)return`<div class="card"><div class="sub center">Ancora nessun turno concluso.</div></div>`;
+  if(!closedRounds.length)return sel+`<div class="card"><div class="sub center">Ancora nessun turno concluso.</div></div>`;
   [...closedRounds].reverse().forEach((r,k)=>{
     const rIdx=A.rounds.indexOf(r);
     const dbCouple=A.couples.find(c=>c.id===r.couple_id);
@@ -1262,6 +1324,7 @@ A.toggleReg=(roundId)=>{
   _regOpen[roundId]=!_regOpen[roundId];
   render();
 };
+A.setRegView=(v)=>{A.regView=v;render();};
 
 // ── VIEW: CLASSIFICA ──────────────────────────────────────────
 function viewClassifica(){
@@ -1338,27 +1401,55 @@ function viewBalance(){
     };
   });
 
-  // filtro coppia: il balTot resta il cumulato globale, filtriamo solo quali righe mostrare
-  const rows=A.balanceFilter
-    ? allRows.filter(r=>r.couple_id===A.balanceFilter)
-    : allRows;
-  const closed=A.balanceFilter
-    ? closedAll.filter(r=>r.couple_id===A.balanceFilter)
-    : closedAll;
+  // aggregato antepost
+  const ap=A.antepost||[];
+  const apBets=ap.length;
+  const apWon=ap.filter(p=>p.outcome==='won').length;
+  const apOpen=ap.filter(p=>p.outcome==='pending').length;
+  const apWagers=ap.reduce((s,p)=>s+(p.giocata_reale||0),0);
+  const apWonEur=ap.reduce((s,p)=>s+(p.vincita_reale||0),0);
+  const apBalRound=apWonEur-apWagers;
+  // il cumulato globale include le antepost come ultimo anello
+  const grandTotal=cumBalance+apBalRound;
+  const apRow={
+    n:'AP', couple_id:null, couple:'Antepost', isAntepost:true,
+    nBets:apBets, nWon:apWon, nOpen:apOpen,
+    wagers:apWagers, won:apWonEur, balRound:apBalRound, balTot:grandTotal
+  };
 
-  // aggregati
-  const tBets=rows.reduce((s,r)=>s+r.nBets,0);
-  const tWon=rows.reduce((s,r)=>s+r.nWon,0);
-  const tOpen=rows.reduce((s,r)=>s+r.nOpen,0);
-  const tWagers=rows.reduce((s,r)=>s+r.wagers,0);
-  const tWonEur=rows.reduce((s,r)=>s+r.won,0);
+  // filtro: 'antepost' mostra solo la riga antepost; coppia filtra i round; null = tutto
+  let rows, closed;
+  if(A.balanceFilter==='antepost'){
+    rows=[apRow];
+    closed=[]; // i totali card sotto useranno solo le antepost
+  } else if(A.balanceFilter){
+    rows=allRows.filter(r=>r.couple_id===A.balanceFilter);
+    closed=closedAll.filter(r=>r.couple_id===A.balanceFilter);
+  } else {
+    rows=allRows;
+    closed=closedAll;
+  }
+
+  // includi antepost negli aggregati se filtro = null (Tutte) o 'antepost'
+  const includeAp = (A.balanceFilter===null||A.balanceFilter==='antepost');
+  // aggregati (rows già contiene apRow se filtro='antepost'; se 'Tutte' aggiungiamo a parte)
+  const baseRows = A.balanceFilter==='antepost' ? [] : rows;
+  let tBets=baseRows.reduce((s,r)=>s+r.nBets,0);
+  let tWon=baseRows.reduce((s,r)=>s+r.nWon,0);
+  let tOpen=baseRows.reduce((s,r)=>s+r.nOpen,0);
+  let tWagers=baseRows.reduce((s,r)=>s+r.wagers,0);
+  let tWonEur=baseRows.reduce((s,r)=>s+r.won,0);
+  // payout open dai round
+  let payoutOpen=closed.flatMap(r=>(r.proposals||[]).filter(p=>p.is_selected&&p.outcome==='pending'))
+    .reduce((s,p)=>s+(p.vincita_pot||0),0);
+  // aggiungi antepost ai totali quando incluse
+  if(A.balanceFilter===null||A.balanceFilter==='antepost'){
+    tBets+=apBets; tWon+=apWon; tOpen+=apOpen; tWagers+=apWagers; tWonEur+=apWonEur;
+    payoutOpen+=ap.filter(p=>p.outcome==='pending').reduce((s,p)=>s+(p.vincita_pot||0),0);
+  }
   const payout=tWagers>0?(tWonEur/tWagers):0;
   const tBalance=tWonEur-tWagers;
   const pctWon=tBets>0?Math.round(tWon/tBets*100):0;
-
-  // payout open: somma vincita_pot delle selezionate ancora pending
-  const payoutOpen=closed.flatMap(r=>(r.proposals||[]).filter(p=>p.is_selected&&p.outcome==='pending'))
-    .reduce((s,p)=>s+(p.vincita_pot||0),0);
 
   // top win: vincita_reale più alta su singola proposta selezionata, con coppia
   let topWin=0, topWinCouple='';
@@ -1369,6 +1460,10 @@ function viewBalance(){
       if((p.vincita_reale||0)>topWin){topWin=p.vincita_reale||0;topWinCouple=cName;}
     });
   });
+  // includi antepost nel top win quando rilevanti
+  if(A.balanceFilter===null||A.balanceFilter==='antepost'){
+    ap.forEach(p=>{ if((p.vincita_reale||0)>topWin){topWin=p.vincita_reale||0;topWinCouple='Antepost';} });
+  }
 
   // top round: balance round più alto, con coppia
   let topRound=null, topRoundCouple='';
@@ -1377,9 +1472,7 @@ function viewBalance(){
   });
   if(topRound===null)topRound=0;
 
-  if(!closed.length){
-    return `<div class="card"><div class="sub center">Ancora nessun turno concluso.</div></div>`;
-  }
+
 
   // card riepilogative
   const payoutPct=(tWagers>0?(tWonEur/tWagers*100):0).toLocaleString('it-IT',{minimumFractionDigits:1,maximumFractionDigits:1});
@@ -1388,12 +1481,19 @@ function viewBalance(){
   let h=`<div class="phase-scroll" style="margin-bottom:12px">
     <button class="phase-pill ${!A.balanceFilter?'active':''}" onclick="A.setBalanceFilter(null)">Tutte</button>
     ${A.couples.map(c=>`<button class="phase-pill ${A.balanceFilter===c.id?'active':''}" style="font-size:10px" onclick="A.setBalanceFilter('${c.id}')">${esc(c.name)}</button>`).join('')}
+    <button class="phase-pill ${A.balanceFilter==='antepost'?'active':''}" onclick="A.setBalanceFilter('antepost')">Antepost</button>
   </div>`;
+
+  // guard: nessun dato da mostrare
+  const hasData = closed.length>0 || ((A.balanceFilter===null||A.balanceFilter==='antepost')&&ap.length>0);
+  if(!hasData){
+    return h+`<div class="card"><div class="sub center">Ancora nessun dato disponibile.</div></div>`;
+  }
 
   h+=`<div class="card">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
       <div class="eyebrow" style="margin:0;line-height:1">Riepilogo</div>
-      <div style="display:flex;align-items:center;gap:6px"><span class="eyebrow" style="margin:0;line-height:1">balance</span><span style="font-family:'Anton';font-size:17px;letter-spacing:0;line-height:1;color:${tBalance>=0?'var(--pitch)':'var(--coral)'}">${eur(tBalance)}€</span></div>
+      <div style="display:flex;align-items:center;gap:6px"><span class="eyebrow" style="margin:0;line-height:1">balance</span><span class="bal-amount" style="font-family:'Anton';letter-spacing:0;line-height:1;color:${tBalance>=0?'var(--pitch)':'var(--coral)'}">${eur(tBalance)}€</span></div>
     </div>
     <div class="statgrid-3">
       <div class="stat"><div class="k"># bets</div><div class="v">${tBets}</div></div>
@@ -1409,7 +1509,7 @@ function viewBalance(){
   </div>`;
 
   // tabella per round
-  h+=`<div class="card balance-table-card"><div class="eyebrow">Dettaglio per round</div>
+  h+=`<div class="card balance-table-card"><div class="eyebrow">Dettaglio${A.balanceFilter==='antepost'?' antepost':' per round'}</div>
     <div style="overflow-x:auto;margin:0 -4px">
     <table style="width:100%;border-collapse:collapse;font-size:11px;min-width:520px">
       <thead>
@@ -1425,7 +1525,17 @@ function viewBalance(){
         </tr>
       </thead>
       <tbody>
-        ${[...rows].reverse().map(r=>`<tr style="border-top:1px solid var(--line);text-align:right">
+        ${(A.balanceFilter===null||A.balanceFilter==='antepost') && ap.length ? `<tr style="border-top:1px solid var(--line);text-align:right;background:rgba(255,206,69,.06)">
+          <td style="text-align:left;padding:8px;font-weight:800"><span style="color:var(--gold)">Antepost</span></td>
+          <td style="padding:8px 6px">${apRow.nBets}</td>
+          <td style="padding:8px 6px;color:var(--pitch)">${apRow.nWon}</td>
+          <td style="padding:8px 6px;color:var(--muted)">${apRow.nOpen}</td>
+          <td style="padding:8px 6px">${eur(apRow.wagers)}</td>
+          <td style="padding:8px 6px">${eur(apRow.won)}</td>
+          <td style="padding:8px 6px;color:${apRow.balRound>=0?'var(--pitch)':'var(--coral)'}">${eur(apRow.balRound)}</td>
+          <td style="padding:8px;font-weight:800;color:${apRow.balTot>=0?'var(--pitch)':'var(--coral)'}">${eur(apRow.balTot)}</td>
+        </tr>`:''}
+        ${A.balanceFilter==='antepost'?'':[...rows].reverse().map(r=>`<tr style="border-top:1px solid var(--line);text-align:right">
           <td style="text-align:left;padding:8px;font-weight:800"><span style="color:var(--pitch)">#${r.n}</span> <span style="color:var(--muted);font-weight:600;font-size:10px">${esc(r.couple)}</span></td>
           <td style="padding:8px 6px">${r.nBets}</td>
           <td style="padding:8px 6px;color:var(--pitch)">${r.nWon}</td>
