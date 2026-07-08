@@ -1513,8 +1513,8 @@ function viewBalance(){
     </div>
     <div class="statgrid-3" style="margin-bottom:8px">
       <div class="stat"><div class="k">balance</div><div class="v" style="color:${tBalance>=0?'var(--pitch)':'var(--coral)'}">${eur(tBalance)}€</div></div>
-      <div class="stat"><div class="k">bonus</div><div class="v green">${eur(A.bonusTotale)}€</div></div>
-      <div class="stat" style="border:1.5px solid var(--gold)"><div class="k">+/−</div><div class="v" style="color:${(tBalance+A.bonusTotale)>=0?'var(--pitch)':'var(--coral)'}">${eur(tBalance+A.bonusTotale)}€</div></div>
+      <div class="stat"><div class="k">bonus</div><div class="v green">${eur(A.balanceFilter===null?A.bonusTotale:0)}€</div></div>
+      <div class="stat" style="border:1.5px solid var(--gold)"><div class="k">+/−</div><div class="v" style="color:${(tBalance+(A.balanceFilter===null?A.bonusTotale:0))>=0?'var(--pitch)':'var(--coral)'}">${eur(tBalance+(A.balanceFilter===null?A.bonusTotale:0))}€</div></div>
     </div>
     <div class="statgrid-3">
       <div class="stat"><div class="k"># bets</div><div class="v">${tBets}</div></div>
