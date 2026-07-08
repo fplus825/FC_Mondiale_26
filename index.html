@@ -322,10 +322,10 @@ const MATCHES=[
   {date:'2026-07-07',time:'02:00',stage:'Ottavi',group:null,home:'USA',away:'Belgio'},
   {date:'2026-07-07',time:'18:00',stage:'Ottavi',group:null,home:'Argentina',away:'Egitto'},
   {date:'2026-07-07',time:'22:00',stage:'Ottavi',group:null,home:'Svizzera',away:'Colombia'},
-  {date:'2026-07-09',time:'22:00',stage:'Quarti',group:null,home:'Vin. S89',away:'Vin. S90'},
-  {date:'2026-07-10',time:'21:00',stage:'Quarti',group:null,home:'Vin. S93',away:'Vin. S94'},
-  {date:'2026-07-11',time:'23:00',stage:'Quarti',group:null,home:'Vin. S91',away:'Vin. S92'},
-  {date:'2026-07-12',time:'03:00',stage:'Quarti',group:null,home:'Vin. S95',away:'Vin. S96'},
+  {date:'2026-07-09',time:'22:00',stage:'Quarti',group:null,home:'Francia',away:'Marocco'},
+  {date:'2026-07-10',time:'21:00',stage:'Quarti',group:null,home:'Spagna',away:'Belgio'},
+  {date:'2026-07-11',time:'23:00',stage:'Quarti',group:null,home:'Norvegia',away:'Inghilterra'},
+  {date:'2026-07-12',time:'03:00',stage:'Quarti',group:null,home:'Argentina',away:'Svizzera'},
   {date:'2026-07-14',time:'21:00',stage:'Semifinale',group:null,home:'Semifinale 1',away:'—'},
   {date:'2026-07-15',time:'21:00',stage:'Semifinale',group:null,home:'Semifinale 2',away:'—'},
   {date:'2026-07-18',time:'23:00',stage:'Finale 3° posto',group:null,home:'Perdente SF1',away:'Perdente SF2'},
@@ -358,6 +358,7 @@ const A={
   balanceFilter:null,  // id coppia, 'antepost', o null per tutte
   antepost:[],         // proposte antepost
   regView:'round',     // 'round' o 'antepost' nel registro
+  bonusTotale:0,       // da app_settings
   loading:true,
 };
 window.A=A;
@@ -421,18 +422,20 @@ async function signOut(){
 
 // ── Supabase data ─────────────────────────────────────────────
 async function loadRounds(){
-  const [{data:rounds},{data:couples},{data:allProfiles},{data:antepost}]=await Promise.all([
+  const [{data:rounds},{data:couples},{data:allProfiles},{data:antepost},{data:settings}]=await Promise.all([
     sb.from('rounds')
       .select(`*, proposals(*, proposal_matches(*, matches(id,date,time,team_home,team_away))), votes(*), round_matches(id, match_id, matches(id,date,time,team_home,team_away,odds_url))`)
       .order('created_at',{ascending:true}),
     sb.from('couples').select('id,name,order_index,member_1,member_2').order('order_index'),
     sb.from('profiles').select('id,name'),
     sb.from('proposals').select('*').eq('is_antepost',true).order('created_at',{ascending:true}),
+    sb.from('app_settings').select('key,value').eq('key','bonus_totale'),
   ]);
   A.rounds=(rounds||[]).filter(r=>!r._isAntepostHolder);
   A.couples=couples||[];
   A.profiles=allProfiles||[];
   A.antepost=antepost||[];
+  A.bonusTotale=(settings&&settings[0]&&settings[0].value)||0;
 }
 
 // Logica round target per selezione partite:
@@ -561,6 +564,13 @@ A.deleteProposal=async(propId)=>{
 A.openVoting=async()=>{
   const r=cur();
   const {error}=await sb.from('rounds').update({status:'voting'}).eq('id',r.id);
+  if(error){showToast('Errore: '+error.message);return;}
+  await loadRounds();render();
+};
+
+A.closeProposals=async()=>{
+  const r=cur();
+  const {error}=await sb.from('rounds').update({status:'closed'}).eq('id',r.id);
   if(error){showToast('Errore: '+error.message);return;}
   await loadRounds();render();
 };
@@ -727,7 +737,7 @@ function render(){
   }
   if(!A.user){renderAuth();return;}
 
-  const tabs=[['turno','Turno'],['calendario','Calendario'],['storico','Registro'],['balance','Balance'],['coppie','Coppie']];
+  const tabs=[['turno','Turno'],['calendario','Calendario'],['storico','Registro'],['balance','Bilancio'],['coppie','Admin']];
   let html=`
   <div class="sticky-top">
     <div class="header">
@@ -935,12 +945,19 @@ function viewTurno(){
         </div>`;
       }
 
-      // tasto per aprire votazione
+      // tasto per aprire votazione o chiudere le proposte (se voto disattivato)
       if(savedProposals.length>0){
-        h+=`<div class="card">
-          <div class="sub" style="margin-bottom:12px">Quando hai finito di inserire le proposte, apri la votazione.</div>
-          <button class="btn btn-coral" onclick="A.openVoting()">Apri la votazione (${savedProposals.length} propost${savedProposals.length>1?'e':'a'})</button>
-        </div>`;
+        if(r.skip_voting){
+          h+=`<div class="card">
+            <div class="sub" style="margin-bottom:12px">La votazione è disattivata per questo turno. Chiudi le proposte per procedere alla selezione.</div>
+            <button class="btn btn-coral" onclick="A.closeProposals()">Chiudi le proposte (${savedProposals.length} propost${savedProposals.length>1?'e':'a'})</button>
+          </div>`;
+        } else {
+          h+=`<div class="card">
+            <div class="sub" style="margin-bottom:12px">Quando hai finito di inserire le proposte, apri la votazione.</div>
+            <button class="btn btn-coral" onclick="A.openVoting()">Apri la votazione (${savedProposals.length} propost${savedProposals.length>1?'e':'a'})</button>
+          </div>`;
+        }
       }
     } else {
       // non-proponenti: vedono proposte in sola lettura
@@ -1491,9 +1508,22 @@ function viewBalance(){
   }
 
   h+=`<div class="card">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
+    <div style="margin-bottom:10px">
       <div class="eyebrow" style="margin:0;line-height:1">Riepilogo</div>
-      <div style="display:flex;align-items:center;gap:6px"><span class="eyebrow" style="margin:0;line-height:1">balance</span><span class="bal-amount" style="font-family:'Anton';letter-spacing:0;line-height:1;color:${tBalance>=0?'var(--pitch)':'var(--coral)'}">${eur(tBalance)}€</span></div>
+    </div>
+    <div style="overflow-x:auto;margin-bottom:10px">
+    <table style="width:100%;border-collapse:collapse;font-size:11px;min-width:280px">
+      <thead><tr style="color:var(--muted);text-align:right">
+        <th style="text-align:left;padding:4px 6px;font-weight:700">Balance</th>
+        <th style="padding:4px 6px;font-weight:700">Bonus</th>
+        <th style="padding:4px 6px;font-weight:700">+/−</th>
+      </tr></thead>
+      <tbody><tr style="border-top:1px solid var(--line);text-align:right">
+        <td style="text-align:left;padding:8px 6px;font-family:'Anton';font-size:15px;color:${tBalance>=0?'var(--pitch)':'var(--coral)'}">${eur(tBalance)}€</td>
+        <td style="padding:8px 6px;font-family:'Anton';font-size:15px;color:var(--pitch)">${eur(A.bonusTotale)}€</td>
+        <td style="padding:6px;border:1.5px solid var(--gold);border-radius:8px;font-family:'Anton';font-size:15px;color:${(tBalance+A.bonusTotale)>=0?'var(--pitch)':'var(--coral)'}">${eur(tBalance+A.bonusTotale)}€</td>
+      </tr></tbody>
+    </table>
     </div>
     <div class="statgrid-3">
       <div class="stat"><div class="k"># bets</div><div class="v">${tBets}</div></div>
@@ -1558,17 +1588,49 @@ function viewCoppie(){
   const activeCoupleId=r?.couple_id||null;
   const activeDbCouple=activeCoupleId?A.couples.find(c=>c.id===activeCoupleId):null;
   const activeName=activeDbCouple?.name||null;
+  const skipVoting=r?.skip_voting||false;
   return`<div class="card"><div class="eyebrow">Le 4 coppie · ordine di rotazione</div>
     ${COUPLES.map((c,i)=>`<div class="couple-card ${c.name===activeName?'active':''}">
       <div class="ttl">${i+1}. ${esc(c.name)} ${c.name===activeName?'· tocca a loro':''}</div>
       <div class="sub">${esc(c.members.join(' & '))}</div></div>`).join('')}
     <div class="note" style="margin-top:4px">Rotazione automatica: dopo la coppia 4 si riparte dalla 1.</div>
   </div>
+  <div class="card"><div class="eyebrow">Bonus</div>
+    <div class="note" style="margin-bottom:10px">Totale bonus ricevuti, incluso nel Bilancio.</div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:12px;color:var(--muted);font-weight:700;white-space:nowrap">Bonus totale €</span>
+      <input id="admin-bonus" type="number" step="0.01" min="0" class="input" style="max-width:140px" value="${A.bonusTotale}" placeholder="0.00" onchange="A.setBonusTotale(this.value)">
+    </div>
+  </div>
+  <div class="card">
+    <div class="eyebrow">Votazione</div>
+    <label style="display:flex;align-items:center;gap:10px;margin-top:8px;cursor:pointer">
+      <input type="checkbox" ${skipVoting?'checked':''} ${!r?'disabled':''} onchange="A.setSkipVoting(this.checked)" style="width:18px;height:18px">
+      <span style="font-size:13px;font-weight:700">Disattiva la fase di votazione per il turno corrente</span>
+    </label>
+    ${!r?'<div class="note" style="margin-top:8px">Disponibile quando un turno è attivo.</div>':''}
+  </div>
   <div class="card"><div class="eyebrow" style="color:var(--coral)">Zona pericolo</div>
     <div class="note" style="margin-bottom:10px">Cancella tutti i turni e la classifica. Le coppie restano.</div>
     <button class="btn btn-ghost" onclick="if(confirm('Sicuro? Operazione irreversibile.'))resetAll()">Azzera turni e classifica</button>
   </div>`;
 }
+
+A.setBonusTotale=async(val)=>{
+  const v=parseFloat(val)||0;
+  const {error}=await sb.from('app_settings').upsert({key:'bonus_totale',value:v});
+  if(error){showToast('Errore: '+error.message);return;}
+  A.bonusTotale=v;
+  render();
+};
+
+A.setSkipVoting=async(checked)=>{
+  const r=cur();
+  if(!r)return;
+  const {error}=await sb.from('rounds').update({skip_voting:checked}).eq('id',r.id);
+  if(error){showToast('Errore: '+error.message);return;}
+  await loadRounds();render();
+};
 
 async function resetAll(){
   await sb.from('votes').delete().neq('id','00000000-0000-0000-0000-000000000000');
