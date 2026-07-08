@@ -1511,19 +1511,10 @@ function viewBalance(){
     <div style="margin-bottom:10px">
       <div class="eyebrow" style="margin:0;line-height:1">Riepilogo</div>
     </div>
-    <div style="overflow-x:auto;margin-bottom:10px">
-    <table style="width:100%;border-collapse:collapse;font-size:11px;min-width:280px">
-      <thead><tr style="color:var(--muted);text-align:right">
-        <th style="text-align:left;padding:4px 6px;font-weight:700">Balance</th>
-        <th style="padding:4px 6px;font-weight:700">Bonus</th>
-        <th style="padding:4px 6px;font-weight:700">+/−</th>
-      </tr></thead>
-      <tbody><tr style="border-top:1px solid var(--line);text-align:right">
-        <td style="text-align:left;padding:8px 6px;font-family:'Anton';font-size:15px;color:${tBalance>=0?'var(--pitch)':'var(--coral)'}">${eur(tBalance)}€</td>
-        <td style="padding:8px 6px;font-family:'Anton';font-size:15px;color:var(--pitch)">${eur(A.bonusTotale)}€</td>
-        <td style="padding:6px;border:1.5px solid var(--gold);border-radius:8px;font-family:'Anton';font-size:15px;color:${(tBalance+A.bonusTotale)>=0?'var(--pitch)':'var(--coral)'}">${eur(tBalance+A.bonusTotale)}€</td>
-      </tr></tbody>
-    </table>
+    <div class="statgrid-3" style="margin-bottom:8px">
+      <div class="stat"><div class="k">balance</div><div class="v" style="color:${tBalance>=0?'var(--pitch)':'var(--coral)'}">${eur(tBalance)}€</div></div>
+      <div class="stat"><div class="k">bonus</div><div class="v green">${eur(A.bonusTotale)}€</div></div>
+      <div class="stat" style="border:1.5px solid var(--gold)"><div class="k">+/−</div><div class="v" style="color:${(tBalance+A.bonusTotale)>=0?'var(--pitch)':'var(--coral)'}">${eur(tBalance+A.bonusTotale)}€</div></div>
     </div>
     <div class="statgrid-3">
       <div class="stat"><div class="k"># bets</div><div class="v">${tBets}</div></div>
