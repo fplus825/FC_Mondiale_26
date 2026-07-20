@@ -357,7 +357,8 @@ const A={
   showPast:false,
   balanceFilter:null,  // id coppia, 'antepost', o null per tutte
   antepost:[],         // proposte antepost
-  regView:'round',     // 'round' o 'antepost' nel registro
+  collettive:[],       // proposte collettive
+  regView:'round',     // 'round', 'antepost' o 'collettiva' nel registro
   bonusTotale:0,       // da app_settings
   loading:true,
 };
@@ -422,7 +423,7 @@ async function signOut(){
 
 // ── Supabase data ─────────────────────────────────────────────
 async function loadRounds(){
-  const [{data:rounds},{data:couples},{data:allProfiles},{data:antepost},{data:settings}]=await Promise.all([
+  const [{data:rounds},{data:couples},{data:allProfiles},{data:antepost},{data:settings},{data:collettive}]=await Promise.all([
     sb.from('rounds')
       .select(`*, proposals(*, proposal_matches(*, matches(id,date,time,team_home,team_away))), votes(*), round_matches(id, match_id, matches(id,date,time,team_home,team_away,odds_url))`)
       .order('created_at',{ascending:true}),
@@ -430,11 +431,13 @@ async function loadRounds(){
     sb.from('profiles').select('id,name'),
     sb.from('proposals').select('*').eq('is_antepost',true).order('created_at',{ascending:true}),
     sb.from('app_settings').select('key,value').eq('key','bonus_totale'),
+    sb.from('proposals').select('*').eq('is_collettiva',true).order('created_at',{ascending:true}),
   ]);
   A.rounds=(rounds||[]).filter(r=>!r._isAntepostHolder);
   A.couples=couples||[];
   A.profiles=allProfiles||[];
   A.antepost=antepost||[];
+  A.collettive=collettive||[];
   A.bonusTotale=(settings&&settings[0]&&settings[0].value)||0;
 }
 
@@ -1204,17 +1207,16 @@ function antepostOutcomeBtn(p,outcome,label){
     style="flex:1;border-radius:8px;border:1px solid var(--line);font-weight:900;font-family:inherit;cursor:pointer;background:${bg};color:${col}">${label}</button>`;
 }
 
-function viewAntepostList(){
-  const ap=A.antepost||[];
-  const nBets=ap.length;
-  const nWon=ap.filter(p=>p.outcome==='won').length;
-  const nOpen=ap.filter(p=>p.outcome==='pending').length;
+function viewFlatProposalList(list,label){
+  const nBets=list.length;
+  const nWon=list.filter(p=>p.outcome==='won').length;
+  const nOpen=list.filter(p=>p.outcome==='pending').length;
   let h=`<div class="card">
-    <div class="eyebrow">Antepost · ${nBets} giocat${nBets===1?'a':'e'} / ${nWon} vint${nWon===1?'a':'e'} / ${nOpen} apert${nOpen===1?'a':'e'}</div>`;
-  if(!ap.length){
-    h+=`<div class="sub" style="margin-top:8px">Nessuna antepost registrata.</div>`;
+    <div class="eyebrow">${label} · ${nBets} giocat${nBets===1?'a':'e'} / ${nWon} vint${nWon===1?'a':'e'} / ${nOpen} apert${nOpen===1?'a':'e'}</div>`;
+  if(!list.length){
+    h+=`<div class="sub" style="margin-top:8px">Nessuna ${label.toLowerCase()} registrata.</div>`;
   } else {
-    ap.forEach((p,i)=>{
+    list.forEach((p,i)=>{
       h+=`<div class="proposal winner" style="margin-bottom:8px;padding-left:50px">
         <div class="tag" style="background:var(--gold);color:#2a1f00">${L(i)}</div>
         <div class="txt">
@@ -1239,14 +1241,18 @@ function viewAntepostList(){
 }
 
 function viewStorico(){
-  // selettore Round / Antepost
+  // selettore Round / Antepost / Collettive
   let sel=`<div class="phase-scroll" style="margin-bottom:12px">
     <button class="phase-pill ${A.regView==='round'?'active':''}" onclick="A.setRegView('round')">Round</button>
     <button class="phase-pill ${A.regView==='antepost'?'active':''}" onclick="A.setRegView('antepost')">Antepost</button>
+    <button class="phase-pill ${A.regView==='collettiva'?'active':''}" onclick="A.setRegView('collettiva')">Collettive</button>
   </div>`;
 
   if(A.regView==='antepost'){
-    return sel+viewAntepostList();
+    return sel+viewFlatProposalList(A.antepost||[],'Antepost');
+  }
+  if(A.regView==='collettiva'){
+    return sel+viewFlatProposalList(A.collettive||[],'Collettive');
   }
 
   if(!A.rounds.length)return sel+`<div class="card"><div class="sub center">Ancora nessun turno.</div></div>`;
@@ -1418,7 +1424,22 @@ function viewBalance(){
     };
   });
 
-  // aggregato antepost
+  // aggregato collettive (cumulate PRIMA delle antepost)
+  const cl=A.collettive||[];
+  const clBets=cl.length;
+  const clWon=cl.filter(p=>p.outcome==='won').length;
+  const clOpen=cl.filter(p=>p.outcome==='pending').length;
+  const clWagers=cl.reduce((s,p)=>s+(p.giocata_reale||0),0);
+  const clWonEur=cl.reduce((s,p)=>s+(p.vincita_reale||0),0);
+  const clBalRound=clWonEur-clWagers;
+  const cumAfterCollettive=cumBalance+clBalRound;
+  const clRow={
+    n:'CL', couple_id:null, couple:'Collettive', isCollettiva:true,
+    nBets:clBets, nWon:clWon, nOpen:clOpen,
+    wagers:clWagers, won:clWonEur, balRound:clBalRound, balTot:cumAfterCollettive
+  };
+
+  // aggregato antepost — cumulato finale (ultimo anello, dopo le collettive)
   const ap=A.antepost||[];
   const apBets=ap.length;
   const apWon=ap.filter(p=>p.outcome==='won').length;
@@ -1426,19 +1447,21 @@ function viewBalance(){
   const apWagers=ap.reduce((s,p)=>s+(p.giocata_reale||0),0);
   const apWonEur=ap.reduce((s,p)=>s+(p.vincita_reale||0),0);
   const apBalRound=apWonEur-apWagers;
-  // il cumulato globale include le antepost come ultimo anello
-  const grandTotal=cumBalance+apBalRound;
+  const grandTotal=cumAfterCollettive+apBalRound;
   const apRow={
     n:'AP', couple_id:null, couple:'Antepost', isAntepost:true,
     nBets:apBets, nWon:apWon, nOpen:apOpen,
     wagers:apWagers, won:apWonEur, balRound:apBalRound, balTot:grandTotal
   };
 
-  // filtro: 'antepost' mostra solo la riga antepost; coppia filtra i round; null = tutto
+  // filtro: 'antepost'/'collettiva' mostra solo la riga aggregata; coppia filtra i round; null = tutto
   let rows, closed;
   if(A.balanceFilter==='antepost'){
     rows=[apRow];
-    closed=[]; // i totali card sotto useranno solo le antepost
+    closed=[];
+  } else if(A.balanceFilter==='collettiva'){
+    rows=[clRow];
+    closed=[];
   } else if(A.balanceFilter){
     rows=allRows.filter(r=>r.couple_id===A.balanceFilter);
     closed=closedAll.filter(r=>r.couple_id===A.balanceFilter);
@@ -1447,10 +1470,8 @@ function viewBalance(){
     closed=closedAll;
   }
 
-  // includi antepost negli aggregati se filtro = null (Tutte) o 'antepost'
-  const includeAp = (A.balanceFilter===null||A.balanceFilter==='antepost');
-  // aggregati (rows già contiene apRow se filtro='antepost'; se 'Tutte' aggiungiamo a parte)
-  const baseRows = A.balanceFilter==='antepost' ? [] : rows;
+  // aggregati (rows già contiene la riga giusta se filtro è antepost/collettiva; se 'Tutte' aggiungiamo a parte)
+  const baseRows = (A.balanceFilter==='antepost'||A.balanceFilter==='collettiva') ? [] : rows;
   let tBets=baseRows.reduce((s,r)=>s+r.nBets,0);
   let tWon=baseRows.reduce((s,r)=>s+r.nWon,0);
   let tOpen=baseRows.reduce((s,r)=>s+r.nOpen,0);
@@ -1459,10 +1480,14 @@ function viewBalance(){
   // payout open dai round
   let payoutOpen=closed.flatMap(r=>(r.proposals||[]).filter(p=>p.is_selected&&p.outcome==='pending'))
     .reduce((s,p)=>s+(p.vincita_pot||0),0);
-  // aggiungi antepost ai totali quando incluse
+  // aggiungi antepost/collettive ai totali secondo il filtro
   if(A.balanceFilter===null||A.balanceFilter==='antepost'){
     tBets+=apBets; tWon+=apWon; tOpen+=apOpen; tWagers+=apWagers; tWonEur+=apWonEur;
     payoutOpen+=ap.filter(p=>p.outcome==='pending').reduce((s,p)=>s+(p.vincita_pot||0),0);
+  }
+  if(A.balanceFilter===null||A.balanceFilter==='collettiva'){
+    tBets+=clBets; tWon+=clWon; tOpen+=clOpen; tWagers+=clWagers; tWonEur+=clWonEur;
+    payoutOpen+=cl.filter(p=>p.outcome==='pending').reduce((s,p)=>s+(p.vincita_pot||0),0);
   }
   const payout=tWagers>0?(tWonEur/tWagers):0;
   const tBalance=tWonEur-tWagers;
@@ -1477,9 +1502,11 @@ function viewBalance(){
       if((p.vincita_reale||0)>topWin){topWin=p.vincita_reale||0;topWinCouple=cName;}
     });
   });
-  // includi antepost nel top win quando rilevanti
   if(A.balanceFilter===null||A.balanceFilter==='antepost'){
     ap.forEach(p=>{ if((p.vincita_reale||0)>topWin){topWin=p.vincita_reale||0;topWinCouple='Antepost';} });
+  }
+  if(A.balanceFilter===null||A.balanceFilter==='collettiva'){
+    cl.forEach(p=>{ if((p.vincita_reale||0)>topWin){topWin=p.vincita_reale||0;topWinCouple='Collettive';} });
   }
 
   // top round: balance round più alto, con coppia
@@ -1499,10 +1526,11 @@ function viewBalance(){
     <button class="phase-pill ${!A.balanceFilter?'active':''}" onclick="A.setBalanceFilter(null)">Tutte</button>
     ${A.couples.map(c=>`<button class="phase-pill ${A.balanceFilter===c.id?'active':''}" style="font-size:10px" onclick="A.setBalanceFilter('${c.id}')">${esc(c.name)}</button>`).join('')}
     <button class="phase-pill ${A.balanceFilter==='antepost'?'active':''}" onclick="A.setBalanceFilter('antepost')">Antepost</button>
+    <button class="phase-pill ${A.balanceFilter==='collettiva'?'active':''}" onclick="A.setBalanceFilter('collettiva')">Collettive</button>
   </div>`;
 
   // guard: nessun dato da mostrare
-  const hasData = closed.length>0 || ((A.balanceFilter===null||A.balanceFilter==='antepost')&&ap.length>0);
+  const hasData = closed.length>0 || ((A.balanceFilter===null||A.balanceFilter==='antepost')&&ap.length>0) || ((A.balanceFilter===null||A.balanceFilter==='collettiva')&&cl.length>0);
   if(!hasData){
     return h+`<div class="card"><div class="sub center">Ancora nessun dato disponibile.</div></div>`;
   }
@@ -1530,7 +1558,7 @@ function viewBalance(){
   </div>`;
 
   // tabella per round
-  h+=`<div class="card balance-table-card"><div class="eyebrow">Dettaglio${A.balanceFilter==='antepost'?' antepost':' per round'}</div>
+  h+=`<div class="card balance-table-card"><div class="eyebrow">Dettaglio${A.balanceFilter==='antepost'?' antepost':A.balanceFilter==='collettiva'?' collettive':' per round'}</div>
     <div style="overflow-x:auto;margin:0 -4px">
     <table style="width:100%;border-collapse:collapse;font-size:11px;min-width:520px">
       <thead>
@@ -1556,7 +1584,17 @@ function viewBalance(){
           <td style="padding:8px 6px;color:${apRow.balRound>=0?'var(--pitch)':'var(--coral)'}">${eur(apRow.balRound)}</td>
           <td style="padding:8px;font-weight:800;color:${apRow.balTot>=0?'var(--pitch)':'var(--coral)'}">${eur(apRow.balTot)}</td>
         </tr>`:''}
-        ${A.balanceFilter==='antepost'?'':[...rows].reverse().map(r=>`<tr style="border-top:1px solid var(--line);text-align:right">
+        ${(A.balanceFilter===null||A.balanceFilter==='collettiva') && cl.length ? `<tr style="border-top:1px solid var(--line);text-align:right;background:rgba(182,255,60,.05)">
+          <td style="text-align:left;padding:8px;font-weight:800"><span style="color:var(--pitch)">Collettive</span></td>
+          <td style="padding:8px 6px">${clRow.nBets}</td>
+          <td style="padding:8px 6px;color:var(--pitch)">${clRow.nWon}</td>
+          <td style="padding:8px 6px;color:var(--muted)">${clRow.nOpen}</td>
+          <td style="padding:8px 6px">${eur(clRow.wagers)}</td>
+          <td style="padding:8px 6px">${eur(clRow.won)}</td>
+          <td style="padding:8px 6px;color:${clRow.balRound>=0?'var(--pitch)':'var(--coral)'}">${eur(clRow.balRound)}</td>
+          <td style="padding:8px;font-weight:800;color:${clRow.balTot>=0?'var(--pitch)':'var(--coral)'}">${eur(clRow.balTot)}</td>
+        </tr>`:''}
+        ${(A.balanceFilter==='antepost'||A.balanceFilter==='collettiva')?'':[...rows].reverse().map(r=>`<tr style="border-top:1px solid var(--line);text-align:right">
           <td style="text-align:left;padding:8px;font-weight:800"><span style="color:var(--pitch)">#${r.n}</span> <span style="color:var(--muted);font-weight:600;font-size:10px">${esc(r.couple)}</span></td>
           <td style="padding:8px 6px">${r.nBets}</td>
           <td style="padding:8px 6px;color:var(--pitch)">${r.nWon}</td>
